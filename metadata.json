@@ -1,0 +1,6 @@
+{
+  "name": "AppleStockPulse",
+  "description": "Persistent background tracker for Apple Canada in-store inventory pickup with real-time stock alerts and checkout deep-linking.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

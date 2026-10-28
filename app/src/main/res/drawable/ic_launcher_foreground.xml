@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Pulse radar rings -->
+    <path
+        android:strokeColor="#1E3A8A"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"
+        android:pathData="M 54, 28 A 26, 26 0 1 0 54, 80 A 26, 26 0 1 0 54, 28" />
+    <path
+        android:strokeColor="#0284C7"
+        android:strokeWidth="1.2"
+        android:fillColor="#00000000"
+        android:pathData="M 54, 36 A 18, 18 0 1 0 54, 72 A 18, 18 0 1 0 54, 36" />
+    <!-- Stock pulse cardiogram / heartbeat line -->
+    <path
+        android:strokeColor="#34D399"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M 24, 54 L 40, 54 L 47, 43 L 52, 65 L 58, 33 L 64, 62 L 69, 54 L 84, 54" />
+    <!-- Pulse signal dot -->
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M 58, 30 A 3, 3 0 1 0 58, 36 A 3, 3 0 1 0 58, 30" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M 58, 31.5 A 1.5, 1.5 0 1 0 58, 34.5 A 1.5, 1.5 0 1 0 58, 31.5" />
+</vector>
