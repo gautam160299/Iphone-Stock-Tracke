@@ -10,6 +10,13 @@ class TrackerPreferences(context: Context) {
         Context.MODE_PRIVATE
     )
 
+    init {
+        // Drop keys from earlier versions: free-text SKUs and the inverted "armed" set
+        if (prefs.contains(LEGACY_KEY_SKUS) || prefs.contains(LEGACY_KEY_NOTIFIED_SKUS)) {
+            prefs.edit().remove(LEGACY_KEY_SKUS).remove(LEGACY_KEY_NOTIFIED_SKUS).apply()
+        }
+    }
+
     companion object {
         private const val PREFS_NAME = "apple_stock_pulse_prefs"
         const val KEY_SELECTED_MODEL = "key_selected_model"
@@ -17,13 +24,39 @@ class TrackerPreferences(context: Context) {
         const val KEY_SELECTED_COLOR = "key_selected_color"
         const val KEY_POSTAL_CODE = "key_postal_code"
         const val KEY_STORE_FILTER = "key_store_filter"
-        const val KEY_NOTIFIED_SKUS = "key_notified_skus"
+        const val KEY_MUTED_SKUS = "key_muted_skus"
+        const val KEY_TRACKING_ENABLED = "key_tracking_enabled"
+        private const val LEGACY_KEY_SKUS = "key_skus"
+        private const val LEGACY_KEY_NOTIFIED_SKUS = "key_notified_skus"
 
         const val DEFAULT_MODEL = "iPhone Duo"
         const val DEFAULT_STORAGE = "All"
         const val DEFAULT_COLOR = "All"
         const val DEFAULT_POSTAL_CODE = "V6C1T2"
         const val DEFAULT_STORE_FILTER = ""
+
+        private val POSTAL_CODE_REGEX = Regex("^[ABCEGHJ-NPRSTVXY][0-9][ABCEGHJ-NPRSTV-Z][0-9][ABCEGHJ-NPRSTV-Z][0-9]$")
+
+        /**
+         * Canadian postal code check, e.g. "V6C 1T2" and "v6c1t2" are valid, "12345" is not.
+         */
+        fun isValidPostalCode(postalCode: String): Boolean {
+            return POSTAL_CODE_REGEX.matches(cleanPostalCode(postalCode))
+        }
+
+        fun cleanPostalCode(postalCode: String): String {
+            return postalCode.replace("\\s+".toRegex(), "").uppercase()
+        }
+
+        /**
+         * Store numbers such as "R601, r488" -> {"R601", "R488"}.
+         */
+        fun parseStoreFilter(raw: String): Set<String> {
+            return raw.split(",")
+                .map { it.trim().uppercase() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        }
     }
 
     fun getSelectedModel(): String {
@@ -56,7 +89,7 @@ class TrackerPreferences(context: Context) {
     }
 
     fun setPostalCode(postalCode: String) {
-        prefs.edit().putString(KEY_POSTAL_CODE, postalCode.trim().uppercase()).apply()
+        prefs.edit().putString(KEY_POSTAL_CODE, cleanPostalCode(postalCode)).apply()
     }
 
     fun getStoreFilter(): String {
@@ -77,27 +110,43 @@ class TrackerPreferences(context: Context) {
     }
 
     /**
-     * Set of specific SKUs the user specifically requested instant alert notifications for.
-     * If empty, all SKUs for the selected model/specs trigger alarms.
+     * Alarms are on for every tracked SKU by default. This set holds the SKUs the user turned off.
      */
-    fun getArmedNotificationSkus(): Set<String> {
-        return prefs.getStringSet(KEY_NOTIFIED_SKUS, emptySet()) ?: emptySet()
+    fun getMutedSkus(): Set<String> {
+        return prefs.getStringSet(KEY_MUTED_SKUS, emptySet())?.toSet() ?: emptySet()
     }
 
-    fun toggleArmedNotificationSku(sku: String) {
-        val current = getArmedNotificationSkus().toMutableSet()
+    /**
+     * Turns the alarm for one SKU on or off. Returns true when the alarm is now on.
+     */
+    fun toggleSkuAlarm(sku: String): Boolean {
+        val muted = getMutedSkus().toMutableSet()
         val clean = sku.trim().uppercase()
-        if (current.contains(clean)) {
-            current.remove(clean)
+        val nowArmed = if (muted.contains(clean)) {
+            muted.remove(clean)
+            true
         } else {
-            current.add(clean)
+            muted.add(clean)
+            false
         }
-        prefs.edit().putStringSet(KEY_NOTIFIED_SKUS, current).apply()
+        prefs.edit().putStringSet(KEY_MUTED_SKUS, muted).apply()
+        return nowArmed
     }
 
     fun isSkuArmed(sku: String): Boolean {
-        val armed = getArmedNotificationSkus()
-        return armed.isEmpty() || armed.contains(sku.trim().uppercase())
+        return !getMutedSkus().contains(sku.trim().uppercase())
+    }
+
+    /**
+     * True while the user wants background monitoring. Lets a system restart of the service
+     * resume monitoring, and keeps a restart from starting monitoring the user never asked for.
+     */
+    fun isTrackingEnabled(): Boolean {
+        return prefs.getBoolean(KEY_TRACKING_ENABLED, false)
+    }
+
+    fun setTrackingEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_TRACKING_ENABLED, enabled).apply()
     }
 
     /**
@@ -114,15 +163,10 @@ class TrackerPreferences(context: Context) {
      * Formats Canadian postal code without whitespace, e.g. "V6C 1T2" -> "V6C1T2".
      */
     fun getCleanPostalCode(): String {
-        return getPostalCode().replace("\\s+".toRegex(), "").uppercase()
+        return cleanPostalCode(getPostalCode())
     }
 
     fun getParsedStoreFilter(): Set<String> {
-        val raw = getStoreFilter()
-        if (raw.isBlank()) return emptySet()
-        return raw.split(",")
-            .map { it.trim().uppercase() }
-            .filter { it.isNotEmpty() }
-            .toSet()
+        return parseStoreFilter(getStoreFilter())
     }
 }

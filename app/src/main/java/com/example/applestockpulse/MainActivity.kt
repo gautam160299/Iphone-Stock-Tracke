@@ -82,7 +82,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -100,6 +99,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.theme.MyApplicationTheme
 import java.text.SimpleDateFormat
@@ -150,37 +150,40 @@ fun AppleStockPulseApp() {
     // Auto trigger initial poll if results are empty on first launch
     LaunchedEffect(Unit) {
         if (uiState.storeCards.isEmpty()) {
-            val forceIntent = Intent(context, StockTrackerService::class.java).apply {
-                action = StockTrackerService.ACTION_FORCE_POLL
-            }
-            context.startService(forceIntent)
+            requestPoll(context)
         }
     }
 
-    // Notification Permission State
-    var hasNotificationPermission by remember {
-        mutableStateOf(
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
-            } else {
-                true
-            }
-        )
-    }
+    // Notification state: runtime permission (Android 13+) plus the app and alarm-channel switches
+    var hasNotificationPermission by remember { mutableStateOf(AlertNotifier.canPostAlarms(context)) }
+    // Set when "Start" opened the permission dialog, so monitoring starts once the user allows it
+    var startAfterPermission by remember { mutableStateOf(false) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        hasNotificationPermission = isGranted
-        if (!isGranted) {
+        hasNotificationPermission = AlertNotifier.canPostAlarms(context)
+        if (isGranted && startAfterPermission) {
+            startTrackerService(context)
+        } else if (!isGranted) {
             Toast.makeText(
                 context,
-                "Notification permission is needed for instant stock alarms!",
+                "Alarms need notifications. Monitoring did not start. Turn on notifications in Settings.",
                 Toast.LENGTH_LONG
             ).show()
+        }
+        startAfterPermission = false
+    }
+
+    fun requestNotifications(startAfter: Boolean) {
+        val permissionMissing = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (permissionMissing) {
+            startAfterPermission = startAfter
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            // Permission is granted, but notifications or the alarm channel are switched off
+            openNotificationSettings(context)
         }
     }
 
@@ -189,9 +192,11 @@ fun AppleStockPulseApp() {
         mutableStateOf(checkBatteryOptimization(context))
     }
 
-    DisposableEffect(Unit) {
+    // Re-check each time the screen comes back, e.g. from the Settings app
+    LifecycleResumeEffect(Unit) {
+        hasNotificationPermission = AlertNotifier.canPostAlarms(context)
         isIgnoringBatteryOptimizations = checkBatteryOptimization(context)
-        onDispose { }
+        onPauseOrDispose { }
     }
 
     Scaffold(
@@ -239,12 +244,10 @@ fun AppleStockPulseApp() {
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             // Permission & Battery notices if needed
-            if (!hasNotificationPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (!hasNotificationPermission) {
                 item {
                     NotificationPermissionBanner(
-                        onRequestPermission = {
-                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
+                        onRequestPermission = { requestNotifications(startAfter = false) }
                     )
                 }
             }
@@ -385,10 +388,7 @@ fun AppleStockPulseApp() {
                                             preferences.saveSelection(model.name, "All", "All", postalCode)
                                             showModelDropdown = false
                                             // Force immediate poll with the newly selected device model
-                                            val forceIntent = Intent(context, StockTrackerService::class.java).apply {
-                                                action = StockTrackerService.ACTION_FORCE_POLL
-                                            }
-                                            context.startService(forceIntent)
+                                            requestPoll(context)
                                         }
                                     )
                                 }
@@ -412,6 +412,7 @@ fun AppleStockPulseApp() {
                                         onClick = {
                                             selectedStorage = "All"
                                             preferences.setSelectedStorage("All")
+                                            requestPoll(context)
                                         },
                                         label = { Text("All Storages", fontSize = 11.sp) }
                                     )
@@ -422,6 +423,7 @@ fun AppleStockPulseApp() {
                                         onClick = {
                                             selectedStorage = storage
                                             preferences.setSelectedStorage(storage)
+                                            requestPoll(context)
                                         },
                                         label = { Text(storage, fontSize = 11.sp) }
                                     )
@@ -436,6 +438,7 @@ fun AppleStockPulseApp() {
                                         onClick = {
                                             selectedColor = "All"
                                             preferences.setSelectedColor("All")
+                                            requestPoll(context)
                                         },
                                         label = { Text("All Colors", fontSize = 11.sp) }
                                     )
@@ -446,6 +449,7 @@ fun AppleStockPulseApp() {
                                         onClick = {
                                             selectedColor = color
                                             preferences.setSelectedColor(color)
+                                            requestPoll(context)
                                         },
                                         label = { Text(color, fontSize = 11.sp) }
                                     )
@@ -461,10 +465,12 @@ fun AppleStockPulseApp() {
                             if (!isRunning) {
                                 Button(
                                     onClick = {
-                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
-                                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                        // Monitoring without notifications would detect stock but never alarm
+                                        if (hasNotificationPermission) {
+                                            startTrackerService(context)
+                                        } else {
+                                            requestNotifications(startAfter = true)
                                         }
-                                        startTrackerService(context)
                                     },
                                     modifier = Modifier
                                         .weight(1f)
@@ -495,10 +501,7 @@ fun AppleStockPulseApp() {
 
                             FilledTonalButton(
                                 onClick = {
-                                    val forceIntent = Intent(context, StockTrackerService::class.java).apply {
-                                        action = StockTrackerService.ACTION_FORCE_POLL
-                                    }
-                                    context.startService(forceIntent)
+                                    requestPoll(context)
                                     Toast.makeText(context, "Scanning Apple inventory...", Toast.LENGTH_SHORT).show()
                                 },
                                 modifier = Modifier.height(46.dp),
@@ -510,7 +513,14 @@ fun AppleStockPulseApp() {
                             }
 
                             OutlinedButton(
-                                onClick = { triggerTestAlert(context) },
+                                onClick = {
+                                    if (hasNotificationPermission) {
+                                        AlertNotifier.postTestAlarm(context)
+                                        Toast.makeText(context, "Test alarm notification fired!", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        requestNotifications(startAfter = false)
+                                    }
+                                },
                                 modifier = Modifier.height(46.dp),
                                 shape = RoundedCornerShape(12.dp)
                             ) {
@@ -555,7 +565,10 @@ fun AppleStockPulseApp() {
                                 color = if (uiState.totalAvailableCount > 0) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = "Tap any [Notify] pill below to get an instant alarm when that exact spec lands.",
+                                text = if (isRunning)
+                                    "Alarms are on for every spec below. Tap a pill to mute or unmute it."
+                                else
+                                    "Monitoring is off. Tap Start to get alarms.",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -571,22 +584,28 @@ fun AppleStockPulseApp() {
                 }
             }
 
+            // Problems Apple or the app reported (wrong SKU, bad postal code, HTTP errors)
+            val errorText = uiState.error
+            if (!errorText.isNullOrBlank()) {
+                item {
+                    ErrorNoticeCard(message = errorText)
+                }
+            }
+
+            // Results of an older poll for another model would put wrong data in this model's grid
+            val storeCards = if (uiState.selectedModel == selectedModel) uiState.storeCards else emptyList()
+
             // Store Grid Cards (matching the screenshot!)
-            if (uiState.storeCards.isEmpty()) {
+            if (storeCards.isEmpty()) {
                 item {
                     EmptyStoreResultsCard(
-                        isRunning = isRunning,
-                        onScanNow = {
-                            val forceIntent = Intent(context, StockTrackerService::class.java).apply {
-                                action = StockTrackerService.ACTION_FORCE_POLL
-                            }
-                            context.startService(forceIntent)
-                        }
+                        hasError = !errorText.isNullOrBlank(),
+                        onScanNow = { requestPoll(context) }
                     )
                 }
             } else {
                 items(
-                    items = uiState.storeCards,
+                    items = storeCards,
                     key = { it.storeNumber }
                 ) { store ->
                     StoreMatrixCard(
@@ -597,15 +616,16 @@ fun AppleStockPulseApp() {
                         armedVersion = armedVersion,
                         isSkuArmed = { sku -> preferences.isSkuArmed(sku) },
                         onToggleArmed = { sku ->
-                            preferences.toggleArmedNotificationSku(sku)
+                            val nowArmed = preferences.toggleSkuAlarm(sku)
                             armedVersion++
+                            val name = ProductCatalog.getProductName(sku)
                             Toast.makeText(
                                 context,
-                                if (preferences.isSkuArmed(sku)) "Alarm armed for $sku!" else "Alarm disarmed for $sku",
+                                if (nowArmed) "Alarm on for $name" else "Alarm muted for $name",
                                 Toast.LENGTH_SHORT
                             ).show()
                         },
-                        onOpenBag = { openAppleBag(context) }
+                        onOpenProduct = { sku -> openProductPage(context, sku) }
                     )
                 }
             }
@@ -615,6 +635,8 @@ fun AppleStockPulseApp() {
     // Postal Code Dialog
     if (showPostalDialog) {
         var tempPostal by remember { mutableStateOf(postalCode) }
+        var tempStoreFilter by remember { mutableStateOf(preferences.getStoreFilter()) }
+        val postalValid = TrackerPreferences.isValidPostalCode(tempPostal)
 
         AlertDialog(
             onDismissRequest = { showPostalDialog = false },
@@ -627,6 +649,10 @@ fun AppleStockPulseApp() {
                         onValueChange = { tempPostal = it.uppercase() },
                         label = { Text("Postal Code") },
                         placeholder = { Text("e.g. V6C1T2") },
+                        isError = !postalValid,
+                        supportingText = if (!postalValid) {
+                            { Text("Use a Canadian postal code, e.g. V6C 1T2") }
+                        } else null,
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -653,18 +679,27 @@ fun AppleStockPulseApp() {
                             }
                         }
                     }
+
+                    OutlinedTextField(
+                        value = tempStoreFilter,
+                        onValueChange = { tempStoreFilter = it.uppercase() },
+                        label = { Text("Only these stores (optional)") },
+                        placeholder = { Text("e.g. R601, R488") },
+                        supportingText = { Text("Leave blank to show all nearby stores") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             },
             confirmButton = {
                 Button(
+                    enabled = postalValid,
                     onClick = {
-                        postalCode = tempPostal.trim()
+                        postalCode = TrackerPreferences.cleanPostalCode(tempPostal)
                         preferences.setPostalCode(postalCode)
+                        preferences.setStoreFilter(TrackerPreferences.parseStoreFilter(tempStoreFilter).joinToString(", "))
                         showPostalDialog = false
-                        val forceIntent = Intent(context, StockTrackerService::class.java).apply {
-                            action = StockTrackerService.ACTION_FORCE_POLL
-                        }
-                        context.startService(forceIntent)
+                        requestPoll(context)
                     }
                 ) {
                     Text("Update Location")
@@ -688,7 +723,7 @@ fun StoreMatrixCard(
     armedVersion: Int,
     isSkuArmed: (String) -> Boolean,
     onToggleArmed: (String) -> Unit,
-    onOpenBag: () -> Unit
+    onOpenProduct: (String) -> Unit
 ) {
     val storagesToDisplay = remember(currentDeviceModel, storageFilter) {
         if (storageFilter == "All") currentDeviceModel.storages else listOf(storageFilter)
@@ -792,9 +827,9 @@ fun StoreMatrixCard(
                 ) {
                     Text(
                         text = if (hasStock)
-                            "🚨 Stock detected! Tap below to open Apple checkout bag."
+                            "🚨 Stock detected! Tap a green Pickup! cell to open it on Apple.ca."
                         else
-                            "↺ Checked live · Tap [Notify] on any spec to set instant restock alarm",
+                            "↺ Checked live · Tap a pill to mute or unmute its alarm",
                         fontSize = 11.sp,
                         color = if (hasStock) Color(0xFF10B981) else MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -872,14 +907,29 @@ fun StoreMatrixCard(
                                     .padding(horizontal = 3.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (isAvailable) {
-                                    // Available in stock -> Green checkout button!
+                                if (sku == null || variant?.isKnown == false) {
+                                    // No such variant in the catalog, or Apple does not know this part number
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = if (sku == null) "—" else "SKU?",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                            modifier = Modifier.padding(vertical = 6.dp)
+                                        )
+                                    }
+                                } else if (isAvailable) {
+                                    // Available in stock -> Green button to the product page
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
                                         color = Color(0xFF10B981),
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable { onOpenBag() }
+                                            .clickable { onOpenProduct(sku) }
                                     ) {
                                         Text(
                                             text = "Pickup!",
@@ -891,7 +941,7 @@ fun StoreMatrixCard(
                                         )
                                     }
                                 } else {
-                                    // Unavailable -> Notify toggle pill
+                                    // Unavailable -> alarm on/off pill
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
                                         color = if (isArmed) Color(0x33F59E0B) else Color(0xFFF1F5F9),
@@ -900,11 +950,7 @@ fun StoreMatrixCard(
                                         } else null,
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clickable {
-                                                if (sku != null) {
-                                                    onToggleArmed(sku)
-                                                }
-                                            }
+                                            .clickable { onToggleArmed(sku) }
                                     ) {
                                         Row(
                                             modifier = Modifier.padding(vertical = 6.dp),
@@ -919,7 +965,7 @@ fun StoreMatrixCard(
                                             )
                                             Spacer(modifier = Modifier.width(2.dp))
                                             Text(
-                                                text = if (isArmed) "Armed" else "Notify",
+                                                text = if (isArmed) "Armed" else "Muted",
                                                 fontSize = 10.sp,
                                                 fontWeight = if (isArmed) FontWeight.Bold else FontWeight.Medium,
                                                 color = if (isArmed) Color(0xFFD97706) else Color(0xFF475569)
@@ -938,7 +984,7 @@ fun StoreMatrixCard(
 
 @Composable
 fun EmptyStoreResultsCard(
-    isRunning: Boolean,
+    hasError: Boolean,
     onScanNow: () -> Unit
 ) {
     Card(
@@ -961,14 +1007,17 @@ fun EmptyStoreResultsCard(
             )
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "Connecting to Apple Canada...",
+                text = if (hasError) "No store results" else "Connecting to Apple Canada...",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "Querying live store inventory and pickup availability for nearby Apple Stores.",
+                text = if (hasError)
+                    "See the notice above, then scan again."
+                else
+                    "Querying live store inventory and pickup availability for nearby Apple Stores.",
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -1008,6 +1057,38 @@ fun PulseIndicator(isActive: Boolean) {
             .clip(CircleShape)
             .background(color)
     )
+}
+
+@Composable
+fun ErrorNoticeCard(message: String) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("error_notice_card"),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0x22EF4444))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = "Notice",
+                tint = Color(0xFFEF4444),
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = message,
+                color = Color(0xFFEF4444),
+                fontSize = 12.sp,
+                lineHeight = 16.sp
+            )
+        }
+    }
 }
 
 @Composable
@@ -1139,16 +1220,32 @@ private fun stopTrackerService(context: Context) {
     Toast.makeText(context, "AppleStockPulse Tracker stopped", Toast.LENGTH_SHORT).show()
 }
 
-private fun triggerTestAlert(context: Context) {
+private fun requestPoll(context: Context) {
     val intent = Intent(context, StockTrackerService::class.java).apply {
-        action = StockTrackerService.ACTION_TRIGGER_TEST
+        action = StockTrackerService.ACTION_FORCE_POLL
     }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        context.startForegroundService(intent)
+    context.startService(intent)
+}
+
+private fun openNotificationSettings(context: Context) {
+    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
     } else {
-        context.startService(intent)
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
     }
-    Toast.makeText(context, "Test alarm notification fired!", Toast.LENGTH_SHORT).show()
+    try {
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Open Settings > Apps > AppleStockPulse > Notifications.", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun openProductPage(context: Context, sku: String) {
+    try {
+        context.startActivity(AlertNotifier.productPageIntent(sku))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Unable to open browser: ${e.message}", Toast.LENGTH_SHORT).show()
+    }
 }
 
 private fun openAppleBag(context: Context) {
