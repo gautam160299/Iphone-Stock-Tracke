@@ -24,36 +24,31 @@ class TrackerPreferencesTest {
     }
 
     @Test
-    fun `alarms are on by default`() {
+    fun `radius defaults to 50 km and only accepts offered values`() {
         val prefs = TrackerPreferences(context)
-        assertTrue(prefs.isSkuArmed("MK244VC/A"))
-        assertTrue(prefs.isSkuArmed("MJR64VC/A"))
+        assertEquals(50, prefs.getRadiusKm())
+        prefs.setRadiusKm(250)
+        assertEquals(250, prefs.getRadiusKm())
+        prefs.setRadiusKm(7)
+        assertEquals(50, prefs.getRadiusKm())
     }
 
     @Test
-    fun `muting one SKU leaves every other SKU armed`() {
-        val prefs = TrackerPreferences(context)
-
-        assertFalse(prefs.toggleSkuAlarm("MK244VC/A"))
-
-        assertFalse(prefs.isSkuArmed("MK244VC/A"))
-        assertTrue(prefs.isSkuArmed("MK254VC/A"))
-        // Another model is not affected
-        assertTrue(prefs.isSkuArmed("MJR64VC/A"))
-
-        assertTrue(prefs.toggleSkuAlarm("mk244vc/a"))
-        assertTrue(prefs.isSkuArmed("MK244VC/A"))
-    }
-
-    @Test
-    fun `old inverted armed set is removed`() {
+    fun `old single selection becomes the first rule`() {
         context.getSharedPreferences("apple_stock_pulse_prefs", Context.MODE_PRIVATE).edit()
-            .putStringSet("key_notified_skus", setOf("MK244VC/A"))
+            .putString("key_selected_model", "iPhone Air")
+            .putString("key_selected_storage", "256GB")
+            .putString("key_selected_color", "All")
             .commit()
 
-        val prefs = TrackerPreferences(context)
+        val selector = TrackerPreferences(context).takeLegacySelection()
 
-        assertTrue(prefs.isSkuArmed("MJR64VC/A"))
+        assertEquals(DeviceSelector("iPhone Air", setOf("256GB"), emptySet()), selector)
+    }
+
+    @Test
+    fun `no old selection gives no rule`() {
+        assertEquals(null, TrackerPreferences(context).takeLegacySelection())
     }
 
     @Test

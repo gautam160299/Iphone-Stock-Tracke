@@ -74,29 +74,62 @@ object AlertNotifier {
     }
 
     /**
-     * One alarm per store, listing every variant that just came into stock there.
-     * Tapping it opens the Apple product page of the first variant.
+     * One alarm per store, listing every variant that just came into stock there and the
+     * rules that watch them. Tapping it opens the Apple product page of the first variant.
      */
-    fun postStoreAlarm(context: Context, store: StoreInventoryCard, newVariants: List<VariantAvailability>) {
+    fun postStoreAlarm(
+        context: Context,
+        store: StoreInventoryCard,
+        newVariants: List<VariantAvailability>,
+        rules: List<WatchRule>
+    ) {
         if (newVariants.isEmpty()) return
         ensureChannels(context)
 
+        val notificationId = notificationIdFor(store.storeNumber)
         val names = newVariants.map { ProductCatalog.getProductName(it.sku) }
-        val first = newVariants.first()
         val title = if (names.size == 1) "🚨 In Stock: ${names.first()}" else "🚨 ${names.size} models in stock"
         val lines = newVariants.joinToString("\n") { "• ${ProductCatalog.getProductName(it.sku)} — ${it.pickupQuote}" }
+        val ruleLine = if (rules.isEmpty()) "" else "\nWatched by: ${rules.joinToString { it.displayName() }}"
+        val distance = store.distanceText.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
 
-        val notification = baseAlarmBuilder(context, notificationIdFor(store.storeNumber), first.sku)
+        val builder = baseAlarmBuilder(context, notificationId, newVariants.first().sku)
             .setContentTitle(title)
-            .setContentText("Apple ${store.storeName} (${store.city})")
+            .setContentText("Apple ${store.storeName} (${store.city})$distance")
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText("Apple ${store.storeName} (${store.city})\n$lines\nTap to open the Apple product page.")
+                    .bigText("Apple ${store.storeName} (${store.city})$distance\n$lines$ruleLine")
             )
-            .build()
 
-        notify(context, notificationIdFor(store.storeNumber), notification)
+        rules.firstOrNull()?.let { rule ->
+            val detailsIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_OPEN_RULE_ID, rule.id)
+            }
+            builder.addAction(
+                android.R.drawable.ic_menu_info_details,
+                "Details",
+                PendingIntent.getActivity(
+                    context,
+                    notificationId + 1,
+                    detailsIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            )
+            builder.addAction(
+                android.R.drawable.ic_lock_silent_mode,
+                if (rules.size == 1) "Mute rule" else "Mute rules",
+                AlarmActionReceiver.mutePendingIntent(context, notificationId, rules.map { it.id })
+            )
+        }
+
+        notify(context, notificationId, builder.build())
         Log.i(TAG, "Alarm for store ${store.storeNumber}: ${newVariants.joinToString { it.sku }}")
+    }
+
+    fun cancel(context: Context, notificationId: Int) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.cancel(notificationId)
     }
 
     fun postTestAlarm(context: Context) {

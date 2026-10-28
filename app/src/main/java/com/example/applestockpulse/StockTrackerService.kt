@@ -50,15 +50,21 @@ import kotlin.random.Random
 
 data class TrackerUiState(
     val isRunning: Boolean = false,
+    val isChecking: Boolean = false,
     val lastCheckedTimestamp: Long? = null,
     val lastStatusMessage: String = "Tracker is idle",
-    val httpStatusCode: Int? = null,
-    val selectedModel: String = "",
-    val storeCards: List<StoreInventoryCard> = emptyList(),
-    val totalAvailableCount: Int = 0,
-    val activeSkus: List<String> = emptyList(),
-    val postalCode: String = "",
+    // Latest result per postal code
+    val snapshots: Map<String, LocationSnapshot> = emptyMap(),
+    val watchedSkuCount: Int = 0,
+    val requestsPerCheck: Int = 0,
     val error: String? = null
+)
+
+data class BrowseState(
+    val model: String = "",
+    val postalCode: String = "",
+    val isLoading: Boolean = false,
+    val snapshot: LocationSnapshot? = null
 )
 
 class StockTrackerService : Service() {
@@ -74,14 +80,18 @@ class StockTrackerService : Service() {
     // One request at a time; also guards the alarm bookkeeping below
     private val pollMutex = Mutex()
     private var lastRequestAtMs = 0L
+    private var lastPruneAtMs = 0L
     private var previouslyAvailablePairs: Set<String> = emptySet()
     private val lastAlarmAtMs = mutableMapOf<String, Long>()
 
-    // Main thread only: manual polls running or queued
-    private var pendingManualPolls = 0
+    // Main thread only: manual checks running or queued
+    private var pendingWatchPolls = 0
+    private var pendingBrowsePolls = 0
 
     private var wakeLock: PowerManager.WakeLock? = null
     private lateinit var preferences: TrackerPreferences
+    private lateinit var ruleStore: WatchRuleStore
+    private lateinit var historyDao: HistoryDao
     private lateinit var notificationManager: NotificationManager
 
     private val okHttpClient: OkHttpClient by lazy {
@@ -100,8 +110,13 @@ class StockTrackerService : Service() {
         const val ACTION_START = "com.example.applestockpulse.ACTION_START"
         const val ACTION_STOP = "com.example.applestockpulse.ACTION_STOP"
         const val ACTION_FORCE_POLL = "com.example.applestockpulse.ACTION_FORCE_POLL"
+        const val ACTION_BROWSE_POLL = "com.example.applestockpulse.ACTION_BROWSE_POLL"
+        const val EXTRA_MODEL = "model"
 
-        // Minimum gap between two requests to Apple, so repeated "Check Now" taps cannot flood it
+        // Part numbers per request to Apple; more SKUs are split into several requests
+        const val MAX_SKUS_PER_REQUEST = 10
+
+        // Minimum gap between two requests to Apple, so repeated taps cannot flood it
         private const val MIN_REQUEST_GAP_MS = 5_000L
 
         // A store/SKU pair that flickers in and out of stock alarms at most once per this period
@@ -110,16 +125,26 @@ class StockTrackerService : Service() {
         // Renewed every cycle; only expires if the loop hangs
         private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
 
+        private const val PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000L
+        private const val DAY_MS = 24 * 60 * 60 * 1000L
+
         private val _isRunning = MutableStateFlow(false)
         val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
 
         private val _uiState = MutableStateFlow(TrackerUiState())
         val uiState: StateFlow<TrackerUiState> = _uiState.asStateFlow()
+
+        private val _browseState = MutableStateFlow(BrowseState())
+        val browseState: StateFlow<BrowseState> = _browseState.asStateFlow()
+
+        fun requestCount(skuCount: Int): Int = (skuCount + MAX_SKUS_PER_REQUEST - 1) / MAX_SKUS_PER_REQUEST
     }
 
     override fun onCreate() {
         super.onCreate()
         preferences = TrackerPreferences(this)
+        ruleStore = WatchRuleStore.get(this)
+        historyDao = HistoryDatabase.get(this).historyDao()
         notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         AlertNotifier.ensureChannels(this)
     }
@@ -132,8 +157,11 @@ class StockTrackerService : Service() {
                 START_NOT_STICKY
             }
             ACTION_FORCE_POLL -> {
-                Log.d(TAG, "ACTION_FORCE_POLL received")
-                requestManualPoll()
+                requestManualWatchPoll()
+                if (_isRunning.value) START_STICKY else START_NOT_STICKY
+            }
+            ACTION_BROWSE_POLL -> {
+                requestBrowsePoll(intent.getStringExtra(EXTRA_MODEL) ?: preferences.getBrowseModel())
                 if (_isRunning.value) START_STICKY else START_NOT_STICKY
             }
             ACTION_START -> {
@@ -188,11 +216,7 @@ class StockTrackerService : Service() {
     }
 
     private fun startTrackerForeground(): Int {
-        val initialNotification = buildOngoingStatusNotification(
-            statusText = "Scanning nearby Apple Store inventory...",
-            availableCount = 0,
-            lastChecked = null
-        )
+        val initialNotification = buildOngoingStatusNotification("Scanning nearby Apple Store inventory...")
 
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -236,13 +260,13 @@ class StockTrackerService : Service() {
                 // Keeps the CPU awake between polls; Doze honours it only with the battery exemption
                 acquireWakeLock()
                 try {
-                    pollMutex.withLock { executePollCycle() }
+                    pollMutex.withLock { executeWatchCycle(background = true) }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     Log.e(TAG, "Unhandled exception in polling cycle", e)
                     _uiState.update {
-                        it.copy(lastStatusMessage = "Poll error: ${e.message}", error = e.localizedMessage)
+                        it.copy(isChecking = false, lastStatusMessage = "Poll error: ${e.message}", error = e.localizedMessage)
                     }
                 }
 
@@ -254,24 +278,34 @@ class StockTrackerService : Service() {
     }
 
     /**
-     * Poll now (e.g. "Check Now", or a new model/location). Without monitoring this only refreshes
-     * the screen: no alarms, no wake lock, and the service stops itself afterwards.
+     * Check all rules now ("Check Now", a new or edited rule). Without monitoring this only
+     * refreshes the screen: no alarms, no wake lock, and the service stops itself afterwards.
      */
-    private fun requestManualPoll() {
+    private fun requestManualWatchPoll() {
         // One running and one queued is enough; more taps add nothing
-        if (pendingManualPolls >= 2) return
-        pendingManualPolls++
+        if (pendingWatchPolls >= 2) return
+        pendingWatchPolls++
+        launchManual(onDone = { pendingWatchPolls-- }) { executeWatchCycle(background = false) }
+    }
+
+    private fun requestBrowsePoll(model: String) {
+        if (pendingBrowsePolls >= 2) return
+        pendingBrowsePolls++
+        launchManual(onDone = { pendingBrowsePolls-- }) { executeBrowse(model) }
+    }
+
+    private fun launchManual(onDone: () -> Unit, block: suspend () -> Unit) {
         serviceScope.launch {
             try {
-                pollMutex.withLock { executePollCycle() }
+                pollMutex.withLock { block() }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Manual poll failed", e)
-                _uiState.update { it.copy(lastStatusMessage = "Poll error: ${e.message}", error = e.localizedMessage) }
+                _uiState.update { it.copy(isChecking = false, lastStatusMessage = "Poll error: ${e.message}", error = e.localizedMessage) }
             } finally {
                 withContext(NonCancellable + Dispatchers.Main) {
-                    pendingManualPolls--
+                    onDone()
                     stopSelfIfIdle()
                 }
             }
@@ -279,64 +313,186 @@ class StockTrackerService : Service() {
     }
 
     private fun stopSelfIfIdle() {
-        if (!_isRunning.value && pendingManualPolls == 0) {
+        if (!_isRunning.value && pendingWatchPolls == 0 && pendingBrowsePolls == 0) {
             stopSelf()
         }
     }
 
     // Must hold pollMutex
-    private suspend fun executePollCycle() {
-        val postalCode = preferences.getCleanPostalCode()
-        val model = preferences.getSelectedModel()
-        val storage = preferences.getSelectedStorage()
-        val color = preferences.getSelectedColor()
-        val skus = preferences.getActiveQuerySkus()
+    private suspend fun executeWatchCycle(background: Boolean) {
+        val rules = ruleStore.rules.value
+        val defaultLocation = preferences.getDefaultLocation()
         val storeFilter = preferences.getParsedStoreFilter()
-
         val currentTimeFormatted = SimpleDateFormat("h:mm:ss a", Locale.getDefault()).format(Date())
 
-        if (!TrackerPreferences.isValidPostalCode(postalCode)) {
+        if (rules.isEmpty()) {
             _uiState.update {
                 it.copy(
-                    selectedModel = model,
-                    storeCards = emptyList(),
-                    totalAvailableCount = 0,
-                    lastStatusMessage = "Configuration incomplete (postal code)",
-                    error = "\"$postalCode\" is not a valid Canadian postal code."
+                    snapshots = emptyMap(),
+                    watchedSkuCount = 0,
+                    requestsPerCheck = 0,
+                    lastStatusMessage = "No devices to watch",
+                    error = null
                 )
             }
+            updateOngoingStatusNotification("No devices to watch. Add one in the app.")
             return
         }
 
-        if (skus.isEmpty()) {
-            _uiState.update {
-                it.copy(
-                    selectedModel = model,
-                    storeCards = emptyList(),
-                    totalAvailableCount = 0,
-                    lastStatusMessage = "Nothing to check",
-                    error = "No $model exists as $storage + $color. Choose other filters."
-                )
+        // One group of SKUs per postal code; each rule applies its own radius afterwards
+        val skusByPostal = rules
+            .groupBy { it.effectiveLocation(defaultLocation).postalCode }
+            .mapValues { (_, group) -> group.flatMap { it.skus() }.distinct().sorted() }
+            .filterValues { it.isNotEmpty() }
+
+        val skuCount = skusByPostal.values.sumOf { it.size }
+        val requests = skusByPostal.values.sumOf { requestCount(it.size) }
+        _uiState.update { it.copy(isChecking = true, watchedSkuCount = skuCount, requestsPerCheck = requests) }
+
+        val snapshots = mutableMapOf<String, LocationSnapshot>()
+        for ((postal, skus) in skusByPostal) {
+            if (!TrackerPreferences.isValidPostalCode(postal)) {
+                snapshots[postal] = LocationSnapshot(postal, error = "\"$postal\" is not a valid Canadian postal code.")
+                continue
             }
-            return
+            snapshots[postal] = fetchLocation(postal, skus, storeFilter, background)
         }
 
+        val errors = snapshots.values.mapNotNull { snap ->
+            snap.error?.let { if (snapshots.size > 1) "${SearchLocation.formatPostalCode(snap.postalCode)}: $it" else it }
+        }
+        val unknown = snapshots.values.flatMap { it.unknownSkus }.distinct()
+        val problems = errors + listOfNotNull(
+            unknown.takeIf { it.isNotEmpty() }?.let {
+                "Apple does not recognize these part numbers: ${it.joinToString()}. Check them in ProductCatalog.kt."
+            }
+        )
+
+        val inStockRules = rules.count {
+            RuleStatusCalculator.statusFor(it, defaultLocation, snapshots).inStock
+        }
+        val statusMsg = if (inStockRules > 0) {
+            "Checked at $currentTimeFormatted — 🚨 $inStockRules of ${rules.size} watched device groups in stock!"
+        } else {
+            "Checked at $currentTimeFormatted — None in stock nearby"
+        }
+
+        _uiState.update {
+            it.copy(
+                isRunning = _isRunning.value,
+                isChecking = false,
+                lastCheckedTimestamp = System.currentTimeMillis(),
+                lastStatusMessage = statusMsg,
+                snapshots = snapshots,
+                error = problems.joinToString("\n").ifEmpty { null }
+            )
+        }
+
+        // Alarms only while the user has monitoring on
+        if (_isRunning.value) {
+            postAlarmsForNewStock(rules, defaultLocation, snapshots)
+        }
+
+        updateOngoingStatusNotification(
+            if (inStockRules > 0) "🚨 $inStockRules device group(s) IN STOCK! ($currentTimeFormatted)"
+            else "${rules.size} device group(s) • None available ($currentTimeFormatted)"
+        )
+    }
+
+    // Must hold pollMutex
+    private suspend fun executeBrowse(model: String) {
+        val postal = preferences.getCleanPostalCode()
+        val skus = ProductCatalog.getSkusForSelection(model, "All", "All")
+        _browseState.update { it.copy(model = model, postalCode = postal, isLoading = true) }
+
+        val snapshot = if (!TrackerPreferences.isValidPostalCode(postal)) {
+            LocationSnapshot(postal, error = "\"$postal\" is not a valid Canadian postal code. Fix it in Settings.")
+        } else {
+            fetchLocation(postal, skus, preferences.getParsedStoreFilter(), background = false)
+        }
+
+        // A newer Browse request for another model may have started meanwhile
+        _browseState.update {
+            if (it.model == model) it.copy(isLoading = false, snapshot = snapshot) else it
+        }
+    }
+
+    /**
+     * Fetches all [skus] for one postal code in groups of [MAX_SKUS_PER_REQUEST],
+     * merges the stores, and records the result in the history.
+     */
+    private suspend fun fetchLocation(
+        postalCode: String,
+        skus: List<String>,
+        storeFilter: Set<String>,
+        background: Boolean
+    ): LocationSnapshot {
+        val storesByNumber = linkedMapOf<String, StoreInventoryCard>()
+        val unknown = mutableListOf<String>()
+        val errors = mutableListOf<String>()
+        var lastStatus: Int? = null
+        var failed = false
+
+        for (chunk in skus.chunked(MAX_SKUS_PER_REQUEST)) {
+            val result = fetchChunk(postalCode, chunk)
+            lastStatus = result.statusCode ?: lastStatus
+            if (result.error != null) {
+                failed = true
+                errors.add(result.error)
+                continue
+            }
+            val parsed = result.parsed ?: continue
+            parsed.apiErrorMessage?.let { errors.add("Apple: $it") }
+            unknown.addAll(parsed.unknownSkus)
+            if (parsed.storesBeforeFilter == 0 && parsed.apiErrorMessage == null) {
+                errors.add("Apple returned no stores near ${SearchLocation.formatPostalCode(postalCode)}.")
+            }
+            for (store in parsed.stores) {
+                val existing = storesByNumber[store.storeNumber]
+                storesByNumber[store.storeNumber] = if (existing == null) store else {
+                    val variants = existing.variants + store.variants
+                    existing.copy(variants = variants, totalAvailableInStore = variants.count { it.isAvailable })
+                }
+            }
+        }
+
+        val allStores = storesByNumber.values.sortedBy { it.distanceKm ?: Double.MAX_VALUE }
+        recordHistory(postalCode, skus, allStores, success = !failed, background = background)
+
+        val visible = if (storeFilter.isEmpty()) allStores else allStores.filter { it.storeNumber.uppercase() in storeFilter }
+        if (allStores.isNotEmpty() && visible.isEmpty()) {
+            errors.add("No nearby store matches your store filter (${storeFilter.joinToString()}).")
+        }
+
+        return LocationSnapshot(
+            postalCode = postalCode,
+            checkedAt = System.currentTimeMillis(),
+            stores = visible,
+            httpStatusCode = lastStatus,
+            error = errors.distinct().joinToString("\n").ifEmpty { null },
+            unknownSkus = unknown.distinct()
+        )
+    }
+
+    private data class ChunkResult(
+        val statusCode: Int?,
+        val parsed: InventoryParseResult?,
+        val error: String?
+    )
+
+    private suspend fun fetchChunk(postalCode: String, skus: List<String>): ChunkResult {
         val waitMs = lastRequestAtMs + MIN_REQUEST_GAP_MS - System.currentTimeMillis()
         if (waitMs > 0) delay(waitMs)
         lastRequestAtMs = System.currentTimeMillis()
 
-        // Batch all SKUs into a single GET request
         val queryBuilder = StringBuilder("pl=true&mts.0=regular")
         skus.forEachIndexed { index, sku ->
             queryBuilder.append("&parts.$index=").append(URLEncoder.encode(sku.trim(), "UTF-8"))
         }
         queryBuilder.append("&location=").append(URLEncoder.encode(postalCode, "UTF-8"))
 
-        val targetUrl = "https://www.apple.com/ca/shop/retail/pickup-message?$queryBuilder"
-        Log.d(TAG, "Polling ${skus.size} SKU(s)")
-
         val request = Request.Builder()
-            .url(targetUrl)
+            .url("https://www.apple.com/ca/shop/retail/pickup-message?$queryBuilder")
             .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 15; SM-F966U) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36")
             .addHeader("Accept", "application/json, text/javascript, */*; q=0.01")
             .addHeader("Accept-Language", "en-CA,en-US;q=0.9,en;q=0.8")
@@ -345,127 +501,107 @@ class StockTrackerService : Service() {
             .addHeader("Sec-Fetch-Site", "same-origin")
             .build()
 
-        val (statusCode, responseBody) = try {
+        Log.d(TAG, "Polling ${skus.size} SKU(s) near $postalCode")
+        val (statusCode, body) = try {
             okHttpClient.newCall(request).await()
         } catch (e: IOException) {
-            Log.e(TAG, "Network error during polling cycle", e)
-            _uiState.update {
-                it.copy(
-                    lastCheckedTimestamp = System.currentTimeMillis(),
-                    lastStatusMessage = "Network error: ${e.message}",
-                    error = "Network error: ${e.localizedMessage}"
-                )
-            }
-            updateOngoingStatusNotification("Connection failed at $currentTimeFormatted", 0, currentTimeFormatted)
-            return
+            Log.e(TAG, "Network error", e)
+            return ChunkResult(null, null, "Network error: ${e.localizedMessage}")
         }
 
         if (statusCode !in 200..299) {
-            val errorMsg = if (statusCode == 541) {
+            val message = if (statusCode == 541) {
                 "HTTP 541: Apple is blocking or rate-limiting these requests. Retrying in ~60s..."
             } else {
                 "HTTP $statusCode from Apple server"
             }
-            Log.w(TAG, errorMsg)
-            _uiState.update {
-                it.copy(
-                    lastCheckedTimestamp = System.currentTimeMillis(),
-                    httpStatusCode = statusCode,
-                    lastStatusMessage = errorMsg,
-                    error = errorMsg
-                )
-            }
-            updateOngoingStatusNotification("HTTP $statusCode at $currentTimeFormatted", 0, currentTimeFormatted)
-            return
+            return ChunkResult(statusCode, null, message)
         }
 
-        val parsed = try {
-            AppleInventoryParser.parse(responseBody, skus, storeFilter, model)
+        return try {
+            ChunkResult(statusCode, AppleInventoryParser.parse(body, skus, emptySet(), ""), null)
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing Apple stores JSON", e)
-            _uiState.update {
-                it.copy(
-                    lastCheckedTimestamp = System.currentTimeMillis(),
-                    httpStatusCode = statusCode,
-                    lastStatusMessage = "Unreadable response at $currentTimeFormatted",
-                    error = "Apple sent a response that is not inventory data (HTTP $statusCode). It may be a block page."
-                )
+            ChunkResult(statusCode, null, "Apple sent a response that is not inventory data (HTTP $statusCode). It may be a block page.")
+        }
+    }
+
+    private suspend fun recordHistory(
+        postalCode: String,
+        skus: List<String>,
+        stores: List<StoreInventoryCard>,
+        success: Boolean,
+        background: Boolean
+    ) {
+        try {
+            val now = System.currentTimeMillis()
+            val observations = stores.flatMap { store ->
+                store.variants.filter { it.isKnown }.map {
+                    StockObservation(store.storeNumber, store.storeName, it.sku, it.isAvailable)
+                }
             }
-            return
-        }
-
-        val problems = buildList {
-            parsed.apiErrorMessage?.let { add("Apple: $it") }
-            if (parsed.unknownSkus.isNotEmpty()) {
-                add("Apple does not recognize these part numbers: ${parsed.unknownSkus.joinToString()}. Check them in ProductCatalog.kt.")
+            val previous = if (observations.isEmpty()) emptyMap() else
+                historyDao.statesForSkus(skus).associateBy { it.storeNumber to it.sku }
+            val changes = ChangeDetector.detect(previous, observations, now)
+            historyDao.record(
+                CheckLogEntity(timestamp = now, postalCode = postalCode, skuCount = skus.size, success = success, background = background),
+                changes.events,
+                changes.states
+            )
+            if (now - lastPruneAtMs > PRUNE_INTERVAL_MS) {
+                historyDao.pruneBefore(now - TrackerPreferences.HISTORY_RETENTION_DAYS * DAY_MS)
+                lastPruneAtMs = now
             }
-            if (parsed.storesBeforeFilter == 0 && parsed.apiErrorMessage == null) {
-                add("Apple returned no stores near $postalCode.")
-            } else if (parsed.stores.isEmpty() && storeFilter.isNotEmpty()) {
-                add("No nearby store matches your store filter (${storeFilter.joinToString()}).")
-            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // History is a bonus; never let it break the alarm path
+            Log.e(TAG, "Failed to record history", e)
         }
-
-        val totalAvailable = parsed.stores.sumOf { it.totalAvailableInStore }
-        val statusMsg = if (totalAvailable > 0) {
-            "Checked at $currentTimeFormatted — 🚨 $totalAvailable IN STOCK in nearby stores!"
-        } else {
-            "Checked at $currentTimeFormatted — None in stock nearby"
-        }
-
-        _uiState.value = TrackerUiState(
-            isRunning = _isRunning.value,
-            lastCheckedTimestamp = System.currentTimeMillis(),
-            lastStatusMessage = statusMsg,
-            httpStatusCode = statusCode,
-            selectedModel = model,
-            storeCards = parsed.stores,
-            totalAvailableCount = totalAvailable,
-            activeSkus = skus,
-            postalCode = postalCode,
-            error = problems.joinToString("\n").ifEmpty { null }
-        )
-
-        // Alarms only while the user has monitoring on
-        if (_isRunning.value) {
-            postAlarmsForNewStock(parsed.stores)
-        }
-
-        val summaryNotificationText = if (totalAvailable > 0) {
-            "🚨 $totalAvailable $model IN STOCK! ($currentTimeFormatted)"
-        } else {
-            "$model • None available ($currentTimeFormatted)"
-        }
-        updateOngoingStatusNotification(summaryNotificationText, totalAvailable, currentTimeFormatted)
     }
 
     // Must hold pollMutex
-    private fun postAlarmsForNewStock(stores: List<StoreInventoryCard>) {
+    private fun postAlarmsForNewStock(
+        rules: List<WatchRule>,
+        defaultLocation: SearchLocation,
+        snapshots: Map<String, LocationSnapshot>
+    ) {
         val now = System.currentTimeMillis()
         val availableNow = mutableSetOf<String>()
+        val armedRules = rules.filter { it.alarmOn }.map { it to it.skus().toSet() }
 
-        for (store in stores) {
-            val newVariants = store.variants
-                .filter { it.isAvailable && preferences.isSkuArmed(it.sku) }
-                .filter { variant ->
+        for ((postal, snapshot) in snapshots) {
+            val rulesHere = armedRules.filter { (rule, _) -> rule.effectiveLocation(defaultLocation).postalCode == postal }
+            if (rulesHere.isEmpty()) continue
+
+            for (store in snapshot.stores) {
+                val newVariants = mutableListOf<VariantAvailability>()
+                val matchedRules = linkedSetOf<WatchRule>()
+                for (variant in store.variants.filter { it.isAvailable }) {
+                    val matching = rulesHere.filter { (rule, skus) ->
+                        variant.sku in skus &&
+                            LocationSnapshot.isWithinRadius(store, rule.effectiveLocation(defaultLocation).radiusKm)
+                    }.map { it.first }
+                    if (matching.isEmpty()) continue
+
                     val key = "${store.storeNumber}:${variant.sku}"
                     availableNow.add(key)
-                    key !in previouslyAvailablePairs && now - (lastAlarmAtMs[key] ?: 0L) >= ALARM_COOLDOWN_MS
+                    if (key !in previouslyAvailablePairs && now - (lastAlarmAtMs[key] ?: 0L) >= ALARM_COOLDOWN_MS) {
+                        newVariants.add(variant)
+                        matchedRules.addAll(matching)
+                    }
                 }
-            if (newVariants.isEmpty() || !_isRunning.value) continue
+                if (newVariants.isEmpty() || !_isRunning.value) continue
 
-            newVariants.forEach { lastAlarmAtMs["${store.storeNumber}:${it.sku}"] = now }
-            AlertNotifier.postStoreAlarm(this, store, newVariants)
+                newVariants.forEach { lastAlarmAtMs["${store.storeNumber}:${it.sku}"] = now }
+                AlertNotifier.postStoreAlarm(this, store, newVariants, matchedRules.toList())
+            }
         }
 
         previouslyAvailablePairs = availableNow
     }
 
-    private fun buildOngoingStatusNotification(
-        statusText: String,
-        availableCount: Int,
-        lastChecked: String?
-    ): Notification {
+    private fun buildOngoingStatusNotification(statusText: String): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
@@ -486,17 +622,14 @@ class StockTrackerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val model = preferences.getSelectedModel()
-        val postal = preferences.getPostalCode()
-        val timeLabel = lastChecked ?: "Just started"
-
-        val bodyText = "$model • Postal: $postal • Stock: $availableCount • Last: $timeLabel"
+        val rules = ruleStore.rules.value
+        val bodyText = "Watching ${rules.size} device group(s) near ${preferences.getDefaultLocation().label()}"
 
         return NotificationCompat.Builder(this, AlertNotifier.STATUS_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_apple_stock)
             .setContentTitle("AppleStockPulse Monitoring Active")
-            .setContentText(bodyText)
-            .setStyle(NotificationCompat.BigTextStyle().bigText("$bodyText\n$statusText"))
+            .setContentText(statusText)
+            .setStyle(NotificationCompat.BigTextStyle().bigText("$statusText\n$bodyText"))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setContentIntent(openAppPendingIntent)
@@ -509,14 +642,9 @@ class StockTrackerService : Service() {
             .build()
     }
 
-    private fun updateOngoingStatusNotification(
-        statusText: String,
-        availableCount: Int,
-        lastChecked: String?
-    ) {
+    private fun updateOngoingStatusNotification(statusText: String) {
         if (_isRunning.value) {
-            val notification = buildOngoingStatusNotification(statusText, availableCount, lastChecked)
-            notificationManager.notify(NOTIFICATION_ID_STATUS, notification)
+            notificationManager.notify(NOTIFICATION_ID_STATUS, buildOngoingStatusNotification(statusText))
         }
     }
 
@@ -527,8 +655,9 @@ class StockTrackerService : Service() {
         pollingJob?.cancel()
         serviceJob.cancelChildren()
         _uiState.update {
-            it.copy(isRunning = false, lastStatusMessage = "Tracker stopped by user")
+            it.copy(isRunning = false, isChecking = false, lastStatusMessage = "Tracker stopped by user")
         }
+        _browseState.update { it.copy(isLoading = false) }
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -537,7 +666,8 @@ class StockTrackerService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         _isRunning.value = false
-        _uiState.update { it.copy(isRunning = false) }
+        _uiState.update { it.copy(isRunning = false, isChecking = false) }
+        _browseState.update { it.copy(isLoading = false) }
         serviceScope.cancel()
         releaseWakeLock()
         Log.d(TAG, "StockTrackerService destroyed")
