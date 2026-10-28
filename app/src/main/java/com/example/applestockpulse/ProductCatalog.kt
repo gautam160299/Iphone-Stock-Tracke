@@ -8,430 +8,165 @@ data class ProductInfo(
     val model: String,
     val storage: String,
     val color: String,
-    val colorHex: Color = Color.Gray,
-    val isFlagship: Boolean = true
+    val colorHex: Color = Color.Gray
+)
+
+data class DeviceModel(
+    val name: String,
+    val subtitle: String,
+    val storages: List<String>,
+    val colors: List<String>
 )
 
 object ProductCatalog {
 
+    val DEVICE_MODELS: List<DeviceModel> = listOf(
+        DeviceModel(
+            name = "iPhone Duo",
+            subtitle = "Foldable Titanium Architecture",
+            storages = listOf("256GB", "512GB", "1TB", "2TB"),
+            colors = listOf("Night Sky", "Star White")
+        ),
+        DeviceModel(
+            name = "iPhone 18 Pro",
+            subtitle = "Variable Aperture Pro Camera (A20 Pro)",
+            storages = listOf("256GB", "512GB", "1TB", "2TB"),
+            colors = listOf("Black", "Silver", "Burgundy", "Glacier")
+        ),
+        DeviceModel(
+            name = "iPhone 18 Pro Max",
+            subtitle = "6.9\" Super Retina Pro Display",
+            storages = listOf("256GB", "512GB", "1TB", "2TB"),
+            colors = listOf("Black", "Silver", "Burgundy", "Glacier")
+        ),
+        DeviceModel(
+            name = "iPhone Air",
+            subtitle = "Ultrathin Titanium Profile",
+            storages = listOf("256GB", "512GB", "1TB"),
+            colors = listOf("Space Black", "Cloud White", "Light Gold", "Sky Blue")
+        ),
+        DeviceModel(
+            name = "iPhone 16",
+            subtitle = "Standard Lineup",
+            storages = listOf("128GB", "256GB", "512GB"),
+            colors = listOf("Black", "White", "Pink", "Teal", "Ultramarine")
+        )
+    )
+
     val CATALOG: List<ProductInfo> = listOf(
-        // ==================== iPhone Duo (Foldable) ====================
-        ProductInfo(
-            sku = "MK244VC/A",
-            name = "iPhone Duo 256GB Star White",
-            model = "iPhone Duo",
-            storage = "256GB",
-            color = "Star White",
-            colorHex = Color(0xFFF8FAFC)
-        ),
-        ProductInfo(
-            sku = "MK254VC/A",
-            name = "iPhone Duo 256GB Night Sky",
-            model = "iPhone Duo",
-            storage = "256GB",
-            color = "Night Sky",
-            colorHex = Color(0xFF0F172A)
-        ),
-        ProductInfo(
-            sku = "MK264VC/A",
-            name = "iPhone Duo 512GB Star White",
-            model = "iPhone Duo",
-            storage = "512GB",
-            color = "Star White",
-            colorHex = Color(0xFFF8FAFC)
-        ),
-        ProductInfo(
-            sku = "MK274VC/A",
-            name = "iPhone Duo 512GB Night Sky",
-            model = "iPhone Duo",
-            storage = "512GB",
-            color = "Night Sky",
-            colorHex = Color(0xFF0F172A)
-        ),
-        ProductInfo(
-            sku = "MK284VC/A",
-            name = "iPhone Duo 1TB Star White",
-            model = "iPhone Duo",
-            storage = "1TB",
-            color = "Star White",
-            colorHex = Color(0xFFF8FAFC)
-        ),
-        ProductInfo(
-            sku = "MK294VC/A",
-            name = "iPhone Duo 1TB Night Sky",
-            model = "iPhone Duo",
-            storage = "1TB",
-            color = "Night Sky",
-            colorHex = Color(0xFF0F172A)
-        ),
-        ProductInfo(
-            sku = "MK2A4VC/A",
-            name = "iPhone Duo 2TB Star White",
-            model = "iPhone Duo",
-            storage = "2TB",
-            color = "Star White",
-            colorHex = Color(0xFFF8FAFC)
-        ),
-        ProductInfo(
-            sku = "MK2C4VC/A",
-            name = "iPhone Duo 2TB Night Sky",
-            model = "iPhone Duo",
-            storage = "2TB",
-            color = "Night Sky",
-            colorHex = Color(0xFF0F172A)
-        ),
+        // ==================== iPhone Duo ====================
+        ProductInfo("MK244VC/A", "iPhone Duo 256GB Star White", "iPhone Duo", "256GB", "Star White", Color(0xFFF8FAFC)),
+        ProductInfo("MK254VC/A", "iPhone Duo 256GB Night Sky", "iPhone Duo", "256GB", "Night Sky", Color(0xFF0F172A)),
+        ProductInfo("MK264VC/A", "iPhone Duo 512GB Star White", "iPhone Duo", "512GB", "Star White", Color(0xFFF8FAFC)),
+        ProductInfo("MK274VC/A", "iPhone Duo 512GB Night Sky", "iPhone Duo", "512GB", "Night Sky", Color(0xFF0F172A)),
+        ProductInfo("MK284VC/A", "iPhone Duo 1TB Star White", "iPhone Duo", "1TB", "Star White", Color(0xFFF8FAFC)),
+        ProductInfo("MK294VC/A", "iPhone Duo 1TB Night Sky", "iPhone Duo", "1TB", "Night Sky", Color(0xFF0F172A)),
+        ProductInfo("MK2A4VC/A", "iPhone Duo 2TB Star White", "iPhone Duo", "2TB", "Star White", Color(0xFFF8FAFC)),
+        ProductInfo("MK2C4VC/A", "iPhone Duo 2TB Night Sky", "iPhone Duo", "2TB", "Night Sky", Color(0xFF0F172A)),
 
         // ==================== iPhone 18 Pro ====================
         // 256GB
-        ProductInfo(
-            sku = "MJR64VC/A",
-            name = "iPhone 18 Pro 256GB Silver",
-            model = "iPhone 18 Pro",
-            storage = "256GB",
-            color = "Silver",
-            colorHex = Color(0xFFE2E8F0)
-        ),
-        ProductInfo(
-            sku = "MJR54VC/A",
-            name = "iPhone 18 Pro 256GB Black",
-            model = "iPhone 18 Pro",
-            storage = "256GB",
-            color = "Black",
-            colorHex = Color(0xFF1E293B)
-        ),
-        ProductInfo(
-            sku = "MJR74VC/A",
-            name = "iPhone 18 Pro 256GB Burgundy",
-            model = "iPhone 18 Pro",
-            storage = "256GB",
-            color = "Burgundy",
-            colorHex = Color(0xFF881337)
-        ),
-        ProductInfo(
-            sku = "MJR84VC/A",
-            name = "iPhone 18 Pro 256GB Glacier",
-            model = "iPhone 18 Pro",
-            storage = "256GB",
-            color = "Glacier",
-            colorHex = Color(0xFF38BDF8)
-        ),
+        ProductInfo("MJR64VC/A", "iPhone 18 Pro 256GB Silver", "iPhone 18 Pro", "256GB", "Silver", Color(0xFFE2E8F0)),
+        ProductInfo("MJR54VC/A", "iPhone 18 Pro 256GB Black", "iPhone 18 Pro", "256GB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MJR74VC/A", "iPhone 18 Pro 256GB Burgundy", "iPhone 18 Pro", "256GB", "Burgundy", Color(0xFF881337)),
+        ProductInfo("MJR84VC/A", "iPhone 18 Pro 256GB Glacier", "iPhone 18 Pro", "256GB", "Glacier", Color(0xFF38BDF8)),
         // 512GB
-        ProductInfo(
-            sku = "MJRC4VC/A",
-            name = "iPhone 18 Pro 512GB Silver",
-            model = "iPhone 18 Pro",
-            storage = "512GB",
-            color = "Silver",
-            colorHex = Color(0xFFE2E8F0)
-        ),
-        ProductInfo(
-            sku = "MJR94VC/A",
-            name = "iPhone 18 Pro 512GB Black",
-            model = "iPhone 18 Pro",
-            storage = "512GB",
-            color = "Black",
-            colorHex = Color(0xFF1E293B)
-        ),
-        ProductInfo(
-            sku = "MJRD4VC/A",
-            name = "iPhone 18 Pro 512GB Burgundy",
-            model = "iPhone 18 Pro",
-            storage = "512GB",
-            color = "Burgundy",
-            colorHex = Color(0xFF881337)
-        ),
-        ProductInfo(
-            sku = "MJRE4VC/A",
-            name = "iPhone 18 Pro 512GB Glacier",
-            model = "iPhone 18 Pro",
-            storage = "512GB",
-            color = "Glacier",
-            colorHex = Color(0xFF38BDF8)
-        ),
+        ProductInfo("MJRC4VC/A", "iPhone 18 Pro 512GB Silver", "iPhone 18 Pro", "512GB", "Silver", Color(0xFFE2E8F0)),
+        ProductInfo("MJR94VC/A", "iPhone 18 Pro 512GB Black", "iPhone 18 Pro", "512GB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MJRD4VC/A", "iPhone 18 Pro 512GB Burgundy", "iPhone 18 Pro", "512GB", "Burgundy", Color(0xFF881337)),
+        ProductInfo("MJRE4VC/A", "iPhone 18 Pro 512GB Glacier", "iPhone 18 Pro", "512GB", "Glacier", Color(0xFF38BDF8)),
         // 1TB
-        ProductInfo(
-            sku = "MJRG4VC/A",
-            name = "iPhone 18 Pro 1TB Silver",
-            model = "iPhone 18 Pro",
-            storage = "1TB",
-            color = "Silver",
-            colorHex = Color(0xFFE2E8F0)
-        ),
-        ProductInfo(
-            sku = "MJRF4VC/A",
-            name = "iPhone 18 Pro 1TB Black",
-            model = "iPhone 18 Pro",
-            storage = "1TB",
-            color = "Black",
-            colorHex = Color(0xFF1E293B)
-        ),
-        ProductInfo(
-            sku = "MJRH4VC/A",
-            name = "iPhone 18 Pro 1TB Burgundy",
-            model = "iPhone 18 Pro",
-            storage = "1TB",
-            color = "Burgundy",
-            colorHex = Color(0xFF881337)
-        ),
-        ProductInfo(
-            sku = "MJRJ4VC/A",
-            name = "iPhone 18 Pro 1TB Glacier",
-            model = "iPhone 18 Pro",
-            storage = "1TB",
-            color = "Glacier",
-            colorHex = Color(0xFF38BDF8)
-        ),
+        ProductInfo("MJRG4VC/A", "iPhone 18 Pro 1TB Silver", "iPhone 18 Pro", "1TB", "Silver", Color(0xFFE2E8F0)),
+        ProductInfo("MJRF4VC/A", "iPhone 18 Pro 1TB Black", "iPhone 18 Pro", "1TB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MJRH4VC/A", "iPhone 18 Pro 1TB Burgundy", "iPhone 18 Pro", "1TB", "Burgundy", Color(0xFF881337)),
+        ProductInfo("MJRJ4VC/A", "iPhone 18 Pro 1TB Glacier", "iPhone 18 Pro", "1TB", "Glacier", Color(0xFF38BDF8)),
+        // 2TB
+        ProductInfo("MJRL4VC/A", "iPhone 18 Pro 2TB Silver", "iPhone 18 Pro", "2TB", "Silver", Color(0xFFE2E8F0)),
+        ProductInfo("MJRK4VC/A", "iPhone 18 Pro 2TB Black", "iPhone 18 Pro", "2TB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MJRM4VC/A", "iPhone 18 Pro 2TB Burgundy", "iPhone 18 Pro", "2TB", "Burgundy", Color(0xFF881337)),
+        ProductInfo("MJRN4VC/A", "iPhone 18 Pro 2TB Glacier", "iPhone 18 Pro", "2TB", "Glacier", Color(0xFF38BDF8)),
 
         // ==================== iPhone 18 Pro Max ====================
         // 256GB
-        ProductInfo(
-            sku = "MJX64VC/A",
-            name = "iPhone 18 Pro Max 256GB Silver",
-            model = "iPhone 18 Pro Max",
-            storage = "256GB",
-            color = "Silver",
-            colorHex = Color(0xFFE2E8F0)
-        ),
-        ProductInfo(
-            sku = "MJX54VC/A",
-            name = "iPhone 18 Pro Max 256GB Black",
-            model = "iPhone 18 Pro Max",
-            storage = "256GB",
-            color = "Black",
-            colorHex = Color(0xFF1E293B)
-        ),
-        ProductInfo(
-            sku = "MJX74VC/A",
-            name = "iPhone 18 Pro Max 256GB Burgundy",
-            model = "iPhone 18 Pro Max",
-            storage = "256GB",
-            color = "Burgundy",
-            colorHex = Color(0xFF881337)
-        ),
-        ProductInfo(
-            sku = "MJX84VC/A",
-            name = "iPhone 18 Pro Max 256GB Glacier",
-            model = "iPhone 18 Pro Max",
-            storage = "256GB",
-            color = "Glacier",
-            colorHex = Color(0xFF38BDF8)
-        ),
+        ProductInfo("MJX64VC/A", "iPhone 18 Pro Max 256GB Silver", "iPhone 18 Pro Max", "256GB", "Silver", Color(0xFFE2E8F0)),
+        ProductInfo("MJX54VC/A", "iPhone 18 Pro Max 256GB Black", "iPhone 18 Pro Max", "256GB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MJX74VC/A", "iPhone 18 Pro Max 256GB Burgundy", "iPhone 18 Pro Max", "256GB", "Burgundy", Color(0xFF881337)),
+        ProductInfo("MJX84VC/A", "iPhone 18 Pro Max 256GB Glacier", "iPhone 18 Pro Max", "256GB", "Glacier", Color(0xFF38BDF8)),
         // 512GB
-        ProductInfo(
-            sku = "MJXA4VC/A",
-            name = "iPhone 18 Pro Max 512GB Silver",
-            model = "iPhone 18 Pro Max",
-            storage = "512GB",
-            color = "Silver",
-            colorHex = Color(0xFFE2E8F0)
-        ),
-        ProductInfo(
-            sku = "MJX94VC/A",
-            name = "iPhone 18 Pro Max 512GB Black",
-            model = "iPhone 18 Pro Max",
-            storage = "512GB",
-            color = "Black",
-            colorHex = Color(0xFF1E293B)
-        ),
-        ProductInfo(
-            sku = "MJXC4VC/A",
-            name = "iPhone 18 Pro Max 512GB Burgundy",
-            model = "iPhone 18 Pro Max",
-            storage = "512GB",
-            color = "Burgundy",
-            colorHex = Color(0xFF881337)
-        ),
-        ProductInfo(
-            sku = "MJXD4VC/A",
-            name = "iPhone 18 Pro Max 512GB Glacier",
-            model = "iPhone 18 Pro Max",
-            storage = "512GB",
-            color = "Glacier",
-            colorHex = Color(0xFF38BDF8)
-        ),
+        ProductInfo("MJXA4VC/A", "iPhone 18 Pro Max 512GB Silver", "iPhone 18 Pro Max", "512GB", "Silver", Color(0xFFE2E8F0)),
+        ProductInfo("MJX94VC/A", "iPhone 18 Pro Max 512GB Black", "iPhone 18 Pro Max", "512GB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MJXC4VC/A", "iPhone 18 Pro Max 512GB Burgundy", "iPhone 18 Pro Max", "512GB", "Burgundy", Color(0xFF881337)),
+        ProductInfo("MJXD4VC/A", "iPhone 18 Pro Max 512GB Glacier", "iPhone 18 Pro Max", "512GB", "Glacier", Color(0xFF38BDF8)),
         // 1TB
-        ProductInfo(
-            sku = "MJXF4VC/A",
-            name = "iPhone 18 Pro Max 1TB Silver",
-            model = "iPhone 18 Pro Max",
-            storage = "1TB",
-            color = "Silver",
-            colorHex = Color(0xFFE2E8F0)
-        ),
-        ProductInfo(
-            sku = "MJXE4VC/A",
-            name = "iPhone 18 Pro Max 1TB Black",
-            model = "iPhone 18 Pro Max",
-            storage = "1TB",
-            color = "Black",
-            colorHex = Color(0xFF1E293B)
-        ),
-        ProductInfo(
-            sku = "MJXG4VC/A",
-            name = "iPhone 18 Pro Max 1TB Burgundy",
-            model = "iPhone 18 Pro Max",
-            storage = "1TB",
-            color = "Burgundy",
-            colorHex = Color(0xFF881337)
-        ),
-        ProductInfo(
-            sku = "MJXH4VC/A",
-            name = "iPhone 18 Pro Max 1TB Glacier",
-            model = "iPhone 18 Pro Max",
-            storage = "1TB",
-            color = "Glacier",
-            colorHex = Color(0xFF38BDF8)
-        ),
+        ProductInfo("MJXF4VC/A", "iPhone 18 Pro Max 1TB Silver", "iPhone 18 Pro Max", "1TB", "Silver", Color(0xFFE2E8F0)),
+        ProductInfo("MJXE4VC/A", "iPhone 18 Pro Max 1TB Black", "iPhone 18 Pro Max", "1TB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MJXG4VC/A", "iPhone 18 Pro Max 1TB Burgundy", "iPhone 18 Pro Max", "1TB", "Burgundy", Color(0xFF881337)),
+        ProductInfo("MJXH4VC/A", "iPhone 18 Pro Max 1TB Glacier", "iPhone 18 Pro Max", "1TB", "Glacier", Color(0xFF38BDF8)),
+        // 2TB
+        ProductInfo("MJXK4VC/A", "iPhone 18 Pro Max 2TB Silver", "iPhone 18 Pro Max", "2TB", "Silver", Color(0xFFE2E8F0)),
+        ProductInfo("MJXJ4VC/A", "iPhone 18 Pro Max 2TB Black", "iPhone 18 Pro Max", "2TB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MJXL4VC/A", "iPhone 18 Pro Max 2TB Burgundy", "iPhone 18 Pro Max", "2TB", "Burgundy", Color(0xFF881337)),
+        ProductInfo("MJXM4VC/A", "iPhone 18 Pro Max 2TB Glacier", "iPhone 18 Pro Max", "2TB", "Glacier", Color(0xFF38BDF8)),
 
         // ==================== iPhone Air ====================
-        ProductInfo(
-            sku = "MG194VC/A",
-            name = "iPhone Air 256GB Cloud White",
-            model = "iPhone Air",
-            storage = "256GB",
-            color = "Cloud White",
-            colorHex = Color(0xFFF8FAFC)
-        ),
-        ProductInfo(
-            sku = "MG184VC/A",
-            name = "iPhone Air 256GB Space Black",
-            model = "iPhone Air",
-            storage = "256GB",
-            color = "Space Black",
-            colorHex = Color(0xFF1E293B)
-        ),
-        ProductInfo(
-            sku = "MG1A4VC/A",
-            name = "iPhone Air 256GB Light Gold",
-            model = "iPhone Air",
-            storage = "256GB",
-            color = "Light Gold",
-            colorHex = Color(0xFFFCD34D)
-        ),
-        ProductInfo(
-            sku = "MG1D4VC/A",
-            name = "iPhone Air 256GB Sky Blue",
-            model = "iPhone Air",
-            storage = "256GB",
-            color = "Sky Blue",
-            colorHex = Color(0xFF7DD3FC)
-        ),
-        ProductInfo(
-            sku = "MG1G4VC/A",
-            name = "iPhone Air 512GB Cloud White",
-            model = "iPhone Air",
-            storage = "512GB",
-            color = "Cloud White",
-            colorHex = Color(0xFFF8FAFC)
-        ),
-        ProductInfo(
-            sku = "MG1E4VC/A",
-            name = "iPhone Air 512GB Space Black",
-            model = "iPhone Air",
-            storage = "512GB",
-            color = "Space Black",
-            colorHex = Color(0xFF1E293B)
-        ),
+        ProductInfo("MG194VC/A", "iPhone Air 256GB Cloud White", "iPhone Air", "256GB", "Cloud White", Color(0xFFF8FAFC)),
+        ProductInfo("MG184VC/A", "iPhone Air 256GB Space Black", "iPhone Air", "256GB", "Space Black", Color(0xFF1E293B)),
+        ProductInfo("MG1A4VC/A", "iPhone Air 256GB Light Gold", "iPhone Air", "256GB", "Light Gold", Color(0xFFFCD34D)),
+        ProductInfo("MG1D4VC/A", "iPhone Air 256GB Sky Blue", "iPhone Air", "256GB", "Sky Blue", Color(0xFF7DD3FC)),
+        ProductInfo("MG1G4VC/A", "iPhone Air 512GB Cloud White", "iPhone Air", "512GB", "Cloud White", Color(0xFFF8FAFC)),
+        ProductInfo("MG1E4VC/A", "iPhone Air 512GB Space Black", "iPhone Air", "512GB", "Space Black", Color(0xFF1E293B)),
+        ProductInfo("MG1H4VC/A", "iPhone Air 512GB Light Gold", "iPhone Air", "512GB", "Light Gold", Color(0xFFFCD34D)),
+        ProductInfo("MG1J4VC/A", "iPhone Air 512GB Sky Blue", "iPhone Air", "512GB", "Sky Blue", Color(0xFF7DD3FC)),
+        ProductInfo("MG1N4VC/A", "iPhone Air 1TB Cloud White", "iPhone Air", "1TB", "Cloud White", Color(0xFFF8FAFC)),
+        ProductInfo("MG1L4VC/A", "iPhone Air 1TB Space Black", "iPhone Air", "1TB", "Space Black", Color(0xFF1E293B)),
 
-        // ==================== iPhone 16 Lineup ====================
-        ProductInfo(
-            sku = "MYDR3VC/A",
-            name = "iPhone 16 128GB White",
-            model = "iPhone 16",
-            storage = "128GB",
-            color = "White",
-            colorHex = Color(0xFFF8FAFC)
-        ),
-        ProductInfo(
-            sku = "MYDQ3VC/A",
-            name = "iPhone 16 128GB Black",
-            model = "iPhone 16",
-            storage = "128GB",
-            color = "Black",
-            colorHex = Color(0xFF1E293B)
-        ),
-        ProductInfo(
-            sku = "MYDT3VC/A",
-            name = "iPhone 16 128GB Pink",
-            model = "iPhone 16",
-            storage = "128GB",
-            color = "Pink",
-            colorHex = Color(0xFFF472B6)
-        ),
-        ProductInfo(
-            sku = "MYDU3VC/A",
-            name = "iPhone 16 128GB Ultramarine",
-            model = "iPhone 16",
-            storage = "128GB",
-            color = "Ultramarine",
-            colorHex = Color(0xFF38BDF8)
-        ),
-        ProductInfo(
-            sku = "MYDV3VC/A",
-            name = "iPhone 16 128GB Teal",
-            model = "iPhone 16",
-            storage = "128GB",
-            color = "Teal",
-            colorHex = Color(0xFF2DD4BF)
-        )
+        // ==================== iPhone 16 ====================
+        ProductInfo("MYDR3VC/A", "iPhone 16 128GB White", "iPhone 16", "128GB", "White", Color(0xFFF8FAFC)),
+        ProductInfo("MYDQ3VC/A", "iPhone 16 128GB Black", "iPhone 16", "128GB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MYDT3VC/A", "iPhone 16 128GB Pink", "iPhone 16", "128GB", "Pink", Color(0xFFF472B6)),
+        ProductInfo("MYDU3VC/A", "iPhone 16 128GB Ultramarine", "iPhone 16", "128GB", "Ultramarine", Color(0xFF38BDF8)),
+        ProductInfo("MYDV3VC/A", "iPhone 16 128GB Teal", "iPhone 16", "128GB", "Teal", Color(0xFF2DD4BF)),
+        ProductInfo("MYDX3VC/A", "iPhone 16 256GB White", "iPhone 16", "256GB", "White", Color(0xFFF8FAFC)),
+        ProductInfo("MYDW3VC/A", "iPhone 16 256GB Black", "iPhone 16", "256GB", "Black", Color(0xFF1E293B)),
+        ProductInfo("MYDY3VC/A", "iPhone 16 256GB Pink", "iPhone 16", "256GB", "Pink", Color(0xFFF472B6)),
+        ProductInfo("MYE03VC/A", "iPhone 16 256GB Ultramarine", "iPhone 16", "256GB", "Ultramarine", Color(0xFF38BDF8)),
+        ProductInfo("MYE13VC/A", "iPhone 16 256GB Teal", "iPhone 16", "256GB", "Teal", Color(0xFF2DD4BF))
     )
 
-    private val skuToInfoMap = CATALOG.associateBy { it.sku }
+    private val skuMap = CATALOG.associateBy { it.sku.uppercase() }
 
     fun getProduct(sku: String): ProductInfo? {
-        val clean = sku.trim().uppercase()
-        return skuToInfoMap[clean]
+        return skuMap[sku.trim().uppercase()]
     }
 
     fun getProductName(sku: String, fallback: String = ""): String {
-        val clean = sku.trim().uppercase()
-        return skuToInfoMap[clean]?.name ?: fallback.ifBlank { clean }
+        return skuMap[sku.trim().uppercase()]?.name ?: fallback.ifBlank { sku.trim().uppercase() }
     }
 
-    /**
-     * Preset Groups for Wide Alerts & One-Tap Batch Tracking
-     */
-    data class PresetGroup(
-        val title: String,
-        val subtitle: String,
-        val skus: List<String>
-    )
+    fun getDeviceModel(name: String): DeviceModel {
+        return DEVICE_MODELS.find { it.name.equals(name, ignoreCase = true) } ?: DEVICE_MODELS[0]
+    }
 
-    val PRESET_GROUPS = listOf(
-        PresetGroup(
-            title = "⭐ iPhone Duo 256GB Star White",
-            subtitle = "Target: MK244VC/A (Primary Flagship)",
-            skus = listOf("MK244VC/A")
-        ),
-        PresetGroup(
-            title = "📱 Any iPhone Duo (All Storages & Colors)",
-            subtitle = "Monitors 256GB, 512GB & 1TB in Star White & Night Sky",
-            skus = listOf("MK244VC/A", "MK254VC/A", "MK264VC/A", "MK274VC/A", "MK284VC/A", "MK294VC/A")
-        ),
-        PresetGroup(
-            title = "🤍 Any White / Silver Flagship",
-            subtitle = "Duo Star White, 18 Pro Silver, 18 Pro Max Silver, Air Cloud White",
-            skus = listOf("MK244VC/A", "MJR64VC/A", "MJX64VC/A", "MG194VC/A")
-        ),
-        PresetGroup(
-            title = "🔥 iPhone 18 Pro 256GB (All 4 Colors)",
-            subtitle = "Monitors Silver, Black, Burgundy & Glacier",
-            skus = listOf("MJR64VC/A", "MJR54VC/A", "MJR74VC/A", "MJR84VC/A")
-        ),
-        PresetGroup(
-            title = "👑 iPhone 18 Pro Max 256GB (All 4 Colors)",
-            subtitle = "Monitors Silver, Black, Burgundy & Glacier",
-            skus = listOf("MJX64VC/A", "MJX54VC/A", "MJX74VC/A", "MJX84VC/A")
-        ),
-        PresetGroup(
-            title = "💎 iPhone 18 Series Glacier Blue Tier",
-            subtitle = "Monitors Glacier color in 18 Pro & 18 Pro Max",
-            skus = listOf("MJR84VC/A", "MJX84VC/A", "MJRE4VC/A", "MJXD4VC/A")
-        ),
-        PresetGroup(
-            title = "🕊️ iPhone Air 256GB (All Colors)",
-            subtitle = "Monitors Cloud White, Space Black, Light Gold & Sky Blue",
-            skus = listOf("MG194VC/A", "MG184VC/A", "MG1A4VC/A", "MG1D4VC/A")
-        )
-    )
+    fun getSku(model: String, storage: String, color: String): String? {
+        return CATALOG.find {
+            it.model.equals(model, ignoreCase = true) &&
+            it.storage.equals(storage, ignoreCase = true) &&
+            it.color.equals(color, ignoreCase = true)
+        }?.sku
+    }
+
+    fun getSkusForSelection(model: String, storageFilter: String, colorFilter: String): List<String> {
+        val matches = CATALOG.filter { item ->
+            item.model.equals(model, ignoreCase = true) &&
+            (storageFilter == "All" || item.storage.equals(storageFilter, ignoreCase = true)) &&
+            (colorFilter == "All" || item.color.equals(colorFilter, ignoreCase = true))
+        }
+
+        // If specific filters produce matches, return them; otherwise return all for that model
+        return if (matches.isNotEmpty()) {
+            matches.map { it.sku }
+        } else {
+            CATALOG.filter { it.model.equals(model, ignoreCase = true) }.map { it.sku }
+        }
+    }
 }

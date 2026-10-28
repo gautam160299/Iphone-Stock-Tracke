@@ -40,15 +40,25 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
-data class StoreSkuAvailability(
+data class VariantAvailability(
+    val sku: String,
+    val model: String,
+    val storage: String,
+    val color: String,
+    val isAvailable: Boolean,
+    val pickupDisplay: String,
+    val pickupQuote: String
+)
+
+data class StoreInventoryCard(
     val storeNumber: String,
     val storeName: String,
     val city: String,
-    val sku: String,
-    val isAvailable: Boolean,
-    val pickupDisplay: String,
-    val pickupQuote: String,
-    val productTitle: String = ""
+    val distanceText: String,
+    val addressText: String,
+    val phoneText: String,
+    val totalAvailableInStore: Int,
+    val variants: List<VariantAvailability>
 )
 
 data class TrackerUiState(
@@ -56,10 +66,11 @@ data class TrackerUiState(
     val lastCheckedTimestamp: Long? = null,
     val lastStatusMessage: String = "Tracker is idle",
     val httpStatusCode: Int? = null,
-    val storesResults: List<StoreSkuAvailability> = emptyList(),
+    val selectedModel: String = "iPhone Duo",
+    val storeCards: List<StoreInventoryCard> = emptyList(),
     val totalAvailableCount: Int = 0,
     val activeSkus: List<String> = emptyList(),
-    val postalCode: String = "",
+    val postalCode: String = "V6C1T2",
     val error: String? = null
 )
 
@@ -130,10 +141,8 @@ class StockTrackerService : Service() {
             }
             ACTION_FORCE_POLL -> {
                 Log.d(TAG, "ACTION_FORCE_POLL received")
-                if (_isRunning.value) {
-                    serviceScope.launch {
-                        executePollCycle()
-                    }
+                serviceScope.launch {
+                    executePollCycle()
                 }
             }
             ACTION_START -> {
@@ -157,7 +166,6 @@ class StockTrackerService : Service() {
         }
         try {
             if (wakeLock?.isHeld == false) {
-                // Acquire wakelock with 2-hour safety timeout
                 wakeLock?.acquire(2 * 60 * 60 * 1000L)
                 Log.d(TAG, "Partial wake lock acquired")
             }
@@ -179,7 +187,6 @@ class StockTrackerService : Service() {
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Channel 1: Ongoing Low-Priority Status Channel
             val statusChannel = NotificationChannel(
                 STATUS_CHANNEL_ID,
                 "Ongoing Polling Status",
@@ -190,7 +197,6 @@ class StockTrackerService : Service() {
             }
             notificationManager.createNotificationChannel(statusChannel)
 
-            // Channel 2: High-Priority Stock Alert Channel with Alarm Sound & Vibration
             val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
@@ -218,7 +224,7 @@ class StockTrackerService : Service() {
     private fun startTrackerForeground() {
         _isRunning.value = true
         val initialNotification = buildOngoingStatusNotification(
-            statusText = "Initializing inventory polling...",
+            statusText = "Scanning nearby Apple Store inventory...",
             availableCount = 0,
             lastChecked = null
         )
@@ -256,9 +262,8 @@ class StockTrackerService : Service() {
                     )
                 }
 
-                // Randomized jitter delay between 52,000ms and 68,000ms
                 val jitterDelay = 52_000L + Random.nextLong(0, 16_001L)
-                Log.d(TAG, "Next poll scheduled in ${jitterDelay / 1000}s")
+                Log.d(TAG, "Next poll in ${jitterDelay / 1000}s")
                 delay(jitterDelay)
             }
         }
@@ -266,7 +271,8 @@ class StockTrackerService : Service() {
 
     private fun executePollCycle() {
         val postalCode = preferences.getCleanPostalCode()
-        val skus = preferences.getParsedSkus()
+        val model = preferences.getSelectedModel()
+        val skus = preferences.getActiveQuerySkus()
         val storeFilter = preferences.getParsedStoreFilter()
 
         val timeFormatter = SimpleDateFormat("h:mm:ss a", Locale.getDefault())
@@ -274,13 +280,13 @@ class StockTrackerService : Service() {
 
         if (skus.isEmpty() || postalCode.isBlank()) {
             _uiState.value = _uiState.value.copy(
-                lastStatusMessage = "Configuration incomplete (SKU or postal code missing)",
-                error = "Please provide valid SKUs and postal code."
+                lastStatusMessage = "Configuration incomplete (Postal code missing)",
+                error = "Please provide a valid Canadian postal code."
             )
             return
         }
 
-        // Build query string
+        // Batch all SKUs into a single GET request
         val queryBuilder = StringBuilder("pl=true&mts.0=regular")
         skus.forEachIndexed { index, sku ->
             val encodedSku = URLEncoder.encode(sku.trim(), "UTF-8")
@@ -324,48 +330,42 @@ class StockTrackerService : Service() {
                 return
             }
 
-            // Parse response
-            val parsedResults = parseAppleInventoryJson(
+            // Parse response into structured store cards with full variant matrix
+            val parsedStores = parseAppleStoresJson(
                 jsonString = responseBody,
                 skus = skus,
-                storeFilter = storeFilter
+                storeFilter = storeFilter,
+                selectedModel = model
             )
 
-            // Check if Apple returned an API error message (e.g. invalid SKU)
-            val apiErrorMessage = try {
-                val rootObj = JSONObject(responseBody)
-                rootObj.optJSONObject("body")?.optString("errorMessage")?.takeIf { it.isNotBlank() }
-            } catch (_: Exception) {
-                null
-            }
-
-            val availableCount = parsedResults.count { it.isAvailable }
+            val totalAvailable = parsedStores.sumOf { it.totalAvailableInStore }
             val nowMs = System.currentTimeMillis()
 
-            val statusMessage = if (apiErrorMessage != null) {
-                "Apple notice: $apiErrorMessage"
+            val statusMsg = if (totalAvailable > 0) {
+                "Checked at $currentTimeFormatted — 🚨 $totalAvailable IN STOCK in nearby stores!"
             } else {
-                "Checked at $currentTimeFormatted — $availableCount in stock (${parsedResults.size} stores scanned)"
+                "Checked at $currentTimeFormatted — None in stock nearby"
             }
 
             _uiState.value = TrackerUiState(
-                isRunning = true,
+                isRunning = _isRunning.value,
                 lastCheckedTimestamp = nowMs,
-                lastStatusMessage = statusMessage,
+                lastStatusMessage = statusMsg,
                 httpStatusCode = statusCode,
-                storesResults = parsedResults,
-                totalAvailableCount = availableCount,
+                selectedModel = model,
+                storeCards = parsedStores,
+                totalAvailableCount = totalAvailable,
                 activeSkus = skus,
                 postalCode = postalCode,
-                error = apiErrorMessage
+                error = null
             )
 
-            val summaryStatus = if (availableCount > 0) {
-                "🚨 $availableCount IN STOCK! Checked $currentTimeFormatted"
+            val summaryNotificationText = if (totalAvailable > 0) {
+                "🚨 $totalAvailable $model IN STOCK! ($currentTimeFormatted)"
             } else {
-                "Active • Checked at $currentTimeFormatted"
+                "$model • None available ($currentTimeFormatted)"
             }
-            updateOngoingStatusNotification(summaryStatus, availableCount, currentTimeFormatted)
+            updateOngoingStatusNotification(summaryNotificationText, totalAvailable, currentTimeFormatted)
 
         } catch (e: Exception) {
             Log.e(TAG, "Network error during polling cycle", e)
@@ -378,18 +378,18 @@ class StockTrackerService : Service() {
         }
     }
 
-    private fun parseAppleInventoryJson(
+    private fun parseAppleStoresJson(
         jsonString: String,
         skus: List<String>,
-        storeFilter: Set<String>
-    ): List<StoreSkuAvailability> {
-        val results = mutableListOf<StoreSkuAvailability>()
+        storeFilter: Set<String>,
+        selectedModel: String
+    ): List<StoreInventoryCard> {
+        val cards = mutableListOf<StoreInventoryCard>()
 
         try {
             val root = JSONObject(jsonString)
             val body = root.optJSONObject("body") ?: return emptyList()
 
-            // Support both /shop/retail/pickup-message (body.stores) and legacy (body.content.pickupMessage.stores)
             val storesArray: JSONArray = body.optJSONArray("stores")
                 ?: body.optJSONObject("content")?.optJSONObject("pickupMessage")?.optJSONArray("stores")
                 ?: body.optJSONObject("pickupMessage")?.optJSONArray("stores")
@@ -400,59 +400,94 @@ class StockTrackerService : Service() {
                 val storeNumber = storeObj.optString("storeNumber", "").trim()
                 val storeName = storeObj.optString("storeName", "Apple Store")
                 val city = storeObj.optString("city", "")
-                val partsAvailability = storeObj.optJSONObject("partsAvailability") ?: JSONObject()
 
-                // Filter target stores if user specified store numbers
                 if (storeFilter.isNotEmpty() && !storeFilter.contains(storeNumber.uppercase())) {
                     continue
                 }
 
+                // Format distance
+                val distanceRaw = storeObj.optString("storeDistanceWithUnit", "")
+                val distanceText = if (distanceRaw.isNotBlank()) "$distanceRaw away" else ""
+
+                // Address & Phone
+                val addressObj = storeObj.optJSONObject("address")
+                val addrLine = addressObj?.optString("address2", "") ?: ""
+                val postCode = addressObj?.optString("postalCode", "") ?: ""
+                val addressText = listOf(addrLine, city, postCode).filter { it.isNotBlank() }.joinToString(", ")
+                val phoneText = storeObj.optString("phoneNumber", "")
+
+                val partsAvailability = storeObj.optJSONObject("partsAvailability") ?: JSONObject()
+
+                val variantsList = mutableListOf<VariantAvailability>()
+                var storeAvailableCount = 0
+
                 for (sku in skus) {
-                    val skuObj = partsAvailability.optJSONObject(sku) ?: continue
-                    val pickupDisplay = skuObj.optString("pickupDisplay", "unavailable")
-                    val pickupSearchQuote = skuObj.optString("pickupSearchQuote", "")
-                    val rawTitle = skuObj.optString("storePickupProductTitle", sku)
-                    val friendlyTitle = ProductCatalog.getProductName(sku, rawTitle)
+                    val skuObj = partsAvailability.optJSONObject(sku)
+                    val pickupDisplay = skuObj?.optString("pickupDisplay") ?: "unavailable"
+                    val pickupQuote = skuObj?.optString("pickupSearchQuote") ?: "None available"
                     val isAvailable = pickupDisplay.equals("available", ignoreCase = true)
+
+                    if (isAvailable) {
+                        storeAvailableCount++
+                    }
+
+                    val product = ProductCatalog.getProduct(sku)
+                    val modelName = product?.model ?: selectedModel
+                    val storage = product?.storage ?: ""
+                    val color = product?.color ?: ""
 
                     val pairKey = "$storeNumber:$sku"
 
                     if (isAvailable) {
-                        if (!alertedStoreSkuPairs.contains(pairKey)) {
-                            alertedStoreSkuPairs.add(pairKey)
-                            triggerStockAlarmNotification(
-                                storeNumber = storeNumber,
-                                storeName = storeName,
-                                city = city,
-                                sku = sku,
-                                productTitle = friendlyTitle,
-                                pickupQuote = pickupSearchQuote
-                            )
+                        // Check if this SKU is armed for alarms
+                        if (preferences.isSkuArmed(sku)) {
+                            if (!alertedStoreSkuPairs.contains(pairKey)) {
+                                alertedStoreSkuPairs.add(pairKey)
+                                triggerStockAlarmNotification(
+                                    storeNumber = storeNumber,
+                                    storeName = storeName,
+                                    city = city,
+                                    sku = sku,
+                                    productTitle = product?.name ?: "$modelName $storage $color",
+                                    pickupQuote = pickupQuote
+                                )
+                            }
                         }
                     } else {
-                        // Automatically re-arm for future restocks
                         alertedStoreSkuPairs.remove(pairKey)
                     }
 
-                    results.add(
-                        StoreSkuAvailability(
-                            storeNumber = storeNumber,
-                            storeName = storeName,
-                            city = city,
+                    variantsList.add(
+                        VariantAvailability(
                             sku = sku,
+                            model = modelName,
+                            storage = storage,
+                            color = color,
                             isAvailable = isAvailable,
                             pickupDisplay = pickupDisplay,
-                            pickupQuote = pickupSearchQuote,
-                            productTitle = friendlyTitle
+                            pickupQuote = pickupQuote
                         )
                     )
                 }
+
+                cards.add(
+                    StoreInventoryCard(
+                        storeNumber = storeNumber,
+                        storeName = storeName,
+                        city = city,
+                        distanceText = distanceText,
+                        addressText = addressText,
+                        phoneText = phoneText,
+                        totalAvailableInStore = storeAvailableCount,
+                        variants = variantsList
+                    )
+                )
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error parsing Apple inventory JSON", e)
+            Log.e(TAG, "Error parsing Apple stores JSON", e)
         }
 
-        return results
+        return cards
     }
 
     private fun triggerStockAlarmNotification(
@@ -465,7 +500,6 @@ class StockTrackerService : Service() {
     ) {
         val uniqueNotificationId = ("$storeNumber:$sku").hashCode()
 
-        // Checkout Bag Deep Link
         val checkoutIntent = Intent(Intent.ACTION_VIEW, Uri.parse("https://www.apple.com/ca/shop/bag")).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -485,7 +519,7 @@ class StockTrackerService : Service() {
             .setContentText("$storeName ($city): $pickupQuote")
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText("$productTitle\nApple Store $storeName ($city)\nStatus: $pickupQuote\nSKU: $sku\nTap to open Apple Store Bag immediately.")
+                    .bigText("$productTitle\nApple Store $storeName ($city)\nStatus: $pickupQuote\nTap to open Apple Store Bag immediately.")
             )
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -519,16 +553,15 @@ class StockTrackerService : Service() {
         val alarmSound = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
             ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
 
-        val testSku = "MYDR3VC/A"
-        val testName = ProductCatalog.getProductName(testSku, "iPhone 16 128GB White")
+        val testName = "iPhone Duo 256GB Star White"
 
         val notification = NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_apple_stock)
             .setContentTitle("🚨 [TEST] In Stock: $testName")
-            .setContentText("Guildford Town Centre (Surrey) has stock! Available Today")
+            .setContentText("Pacific Centre (Vancouver) has stock! Available Today")
             .setStyle(
                 NotificationCompat.BigTextStyle()
-                    .bigText("TEST ALARM NOTIFICATION:\n$testName (SKU: $testSku)\nGuildford Town Centre (Surrey)\nAudio & vibration verification successful.\nTap to test checkout bag deep-link.")
+                    .bigText("TEST ALARM NOTIFICATION:\n$testName\nPacific Centre (Vancouver)\nAudio & vibration verification successful.\nTap to test checkout bag deep-link.")
             )
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
@@ -571,15 +604,15 @@ class StockTrackerService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val activeSkus = preferences.getSkus()
+        val model = preferences.getSelectedModel()
         val postal = preferences.getPostalCode()
-        val timeLabel = lastChecked ?: "Not checked yet"
+        val timeLabel = lastChecked ?: "Just started"
 
-        val bodyText = "SKUs: $activeSkus • Postal: $postal • Last: $timeLabel • Stock: $availableCount"
+        val bodyText = "$model • Postal: $postal • Stock: $availableCount • Last: $timeLabel"
 
         return NotificationCompat.Builder(this, STATUS_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_apple_stock)
-            .setContentTitle("AppleStockPulse Polling Active")
+            .setContentTitle("AppleStockPulse Monitoring Active")
             .setContentText(bodyText)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$bodyText\n$statusText"))
             .setOngoing(true)

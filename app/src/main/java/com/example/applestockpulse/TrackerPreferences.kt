@@ -12,21 +12,42 @@ class TrackerPreferences(context: Context) {
 
     companion object {
         private const val PREFS_NAME = "apple_stock_pulse_prefs"
-        const val KEY_SKUS = "key_skus"
+        const val KEY_SELECTED_MODEL = "key_selected_model"
+        const val KEY_SELECTED_STORAGE = "key_selected_storage"
+        const val KEY_SELECTED_COLOR = "key_selected_color"
         const val KEY_POSTAL_CODE = "key_postal_code"
         const val KEY_STORE_FILTER = "key_store_filter"
+        const val KEY_NOTIFIED_SKUS = "key_notified_skus"
 
-        const val DEFAULT_SKUS = "MK244VC/A, MJR64VC/A"
-        const val DEFAULT_POSTAL_CODE = "V3T2W1"
+        const val DEFAULT_MODEL = "iPhone Duo"
+        const val DEFAULT_STORAGE = "All"
+        const val DEFAULT_COLOR = "All"
+        const val DEFAULT_POSTAL_CODE = "V6C1T2"
         const val DEFAULT_STORE_FILTER = ""
     }
 
-    fun getSkus(): String {
-        return prefs.getString(KEY_SKUS, DEFAULT_SKUS)?.takeIf { it.isNotBlank() } ?: DEFAULT_SKUS
+    fun getSelectedModel(): String {
+        return prefs.getString(KEY_SELECTED_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
     }
 
-    fun setSkus(skus: String) {
-        prefs.edit().putString(KEY_SKUS, skus.trim()).apply()
+    fun setSelectedModel(model: String) {
+        prefs.edit().putString(KEY_SELECTED_MODEL, model).apply()
+    }
+
+    fun getSelectedStorage(): String {
+        return prefs.getString(KEY_SELECTED_STORAGE, DEFAULT_STORAGE) ?: DEFAULT_STORAGE
+    }
+
+    fun setSelectedStorage(storage: String) {
+        prefs.edit().putString(KEY_SELECTED_STORAGE, storage).apply()
+    }
+
+    fun getSelectedColor(): String {
+        return prefs.getString(KEY_SELECTED_COLOR, DEFAULT_COLOR) ?: DEFAULT_COLOR
+    }
+
+    fun setSelectedColor(color: String) {
+        prefs.edit().putString(KEY_SELECTED_COLOR, color).apply()
     }
 
     fun getPostalCode(): String {
@@ -46,35 +67,56 @@ class TrackerPreferences(context: Context) {
         prefs.edit().putString(KEY_STORE_FILTER, storeFilter.trim().uppercase()).apply()
     }
 
-    fun saveConfiguration(skus: String, postalCode: String, storeFilter: String) {
+    fun saveSelection(model: String, storage: String, color: String, postalCode: String) {
         prefs.edit()
-            .putString(KEY_SKUS, skus.trim())
+            .putString(KEY_SELECTED_MODEL, model)
+            .putString(KEY_SELECTED_STORAGE, storage)
+            .putString(KEY_SELECTED_COLOR, color)
             .putString(KEY_POSTAL_CODE, postalCode.trim().uppercase())
-            .putString(KEY_STORE_FILTER, storeFilter.trim().uppercase())
             .apply()
     }
 
     /**
-     * Returns individual SKU strings cleaned, trimmed, and validated.
+     * Set of specific SKUs the user specifically requested instant alert notifications for.
+     * If empty, all SKUs for the selected model/specs trigger alarms.
      */
-    fun getParsedSkus(): List<String> {
-        val raw = getSkus()
-        val parsed = raw.split(",")
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-        return if (parsed.isEmpty()) listOf(DEFAULT_SKUS) else parsed
+    fun getArmedNotificationSkus(): Set<String> {
+        return prefs.getStringSet(KEY_NOTIFIED_SKUS, emptySet()) ?: emptySet()
+    }
+
+    fun toggleArmedNotificationSku(sku: String) {
+        val current = getArmedNotificationSkus().toMutableSet()
+        val clean = sku.trim().uppercase()
+        if (current.contains(clean)) {
+            current.remove(clean)
+        } else {
+            current.add(clean)
+        }
+        prefs.edit().putStringSet(KEY_NOTIFIED_SKUS, current).apply()
+    }
+
+    fun isSkuArmed(sku: String): Boolean {
+        val armed = getArmedNotificationSkus()
+        return armed.isEmpty() || armed.contains(sku.trim().uppercase())
     }
 
     /**
-     * Returns Canadian postal code without spaces, e.g. "V3T 2W1" -> "V3T2W1".
+     * Resolves the list of SKUs that the background service should query.
+     */
+    fun getActiveQuerySkus(): List<String> {
+        val model = getSelectedModel()
+        val storage = getSelectedStorage()
+        val color = getSelectedColor()
+        return ProductCatalog.getSkusForSelection(model, storage, color)
+    }
+
+    /**
+     * Formats Canadian postal code without whitespace, e.g. "V6C 1T2" -> "V6C1T2".
      */
     fun getCleanPostalCode(): String {
         return getPostalCode().replace("\\s+".toRegex(), "").uppercase()
     }
 
-    /**
-     * Returns target store IDs (e.g. Set of "R280", "R486") or empty set if no filter.
-     */
     fun getParsedStoreFilter(): Set<String> {
         val raw = getStoreFilter()
         if (raw.isBlank()) return emptySet()
