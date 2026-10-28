@@ -20,37 +20,12 @@ data class DeviceModel(
 
 object ProductCatalog {
 
-    val DEVICE_MODELS: List<DeviceModel> = listOf(
-        DeviceModel(
-            name = "iPhone Duo",
-            subtitle = "Foldable Titanium Architecture",
-            storages = listOf("256GB", "512GB", "1TB", "2TB"),
-            colors = listOf("Night Sky", "Star White")
-        ),
-        DeviceModel(
-            name = "iPhone 18 Pro",
-            subtitle = "Variable Aperture Pro Camera (A20 Pro)",
-            storages = listOf("256GB", "512GB", "1TB", "2TB"),
-            colors = listOf("Black", "Silver", "Burgundy", "Glacier")
-        ),
-        DeviceModel(
-            name = "iPhone 18 Pro Max",
-            subtitle = "6.9\" Super Retina Pro Display",
-            storages = listOf("256GB", "512GB", "1TB", "2TB"),
-            colors = listOf("Black", "Silver", "Burgundy", "Glacier")
-        ),
-        DeviceModel(
-            name = "iPhone Air",
-            subtitle = "Ultrathin Titanium Profile",
-            storages = listOf("256GB", "512GB", "1TB"),
-            colors = listOf("Space Black", "Cloud White", "Light Gold", "Sky Blue")
-        ),
-        DeviceModel(
-            name = "iPhone 16",
-            subtitle = "Standard Lineup",
-            storages = listOf("128GB", "256GB", "512GB"),
-            colors = listOf("Black", "White", "Pink", "Teal", "Ultramarine")
-        )
+    private val MODEL_SUBTITLES: List<Pair<String, String>> = listOf(
+        "iPhone Duo" to "Foldable Titanium Architecture",
+        "iPhone 18 Pro" to "Variable Aperture Pro Camera (A20 Pro)",
+        "iPhone 18 Pro Max" to "6.9\" Super Retina Pro Display",
+        "iPhone Air" to "Ultrathin Titanium Profile",
+        "iPhone 16" to "Standard Lineup"
     )
 
     val CATALOG: List<ProductInfo> = listOf(
@@ -135,6 +110,29 @@ object ProductCatalog {
 
     private val skuMap = CATALOG.associateBy { it.sku.uppercase() }
 
+    // Storages and colors come from CATALOG so the UI never offers a combination without a SKU
+    val DEVICE_MODELS: List<DeviceModel> = MODEL_SUBTITLES.map { (name, subtitle) ->
+        val items = CATALOG.filter { it.model == name }
+        DeviceModel(
+            name = name,
+            subtitle = subtitle,
+            storages = items.map { it.storage }.distinct().sortedBy { storageInGigabytes(it) },
+            colors = items.map { it.color }.distinct()
+        )
+    }
+
+    fun storageInGigabytes(storage: String): Int {
+        val number = storage.filter { it.isDigit() }.toIntOrNull() ?: 0
+        return if (storage.endsWith("TB", ignoreCase = true)) number * 1024 else number
+    }
+
+    /**
+     * Apple product page for a part number, e.g. https://www.apple.com/ca/shop/product/MYDR3VC/A
+     */
+    fun productPageUrl(sku: String): String {
+        return "https://www.apple.com/ca/shop/product/${sku.trim().uppercase()}"
+    }
+
     fun getProduct(sku: String): ProductInfo? {
         return skuMap[sku.trim().uppercase()]
     }
@@ -156,17 +154,11 @@ object ProductCatalog {
     }
 
     fun getSkusForSelection(model: String, storageFilter: String, colorFilter: String): List<String> {
-        val matches = CATALOG.filter { item ->
+        // No fallback: a filter combination without a SKU must not silently track other variants
+        return CATALOG.filter { item ->
             item.model.equals(model, ignoreCase = true) &&
             (storageFilter == "All" || item.storage.equals(storageFilter, ignoreCase = true)) &&
             (colorFilter == "All" || item.color.equals(colorFilter, ignoreCase = true))
-        }
-
-        // If specific filters produce matches, return them; otherwise return all for that model
-        return if (matches.isNotEmpty()) {
-            matches.map { it.sku }
-        } else {
-            CATALOG.filter { it.model.equals(model, ignoreCase = true) }.map { it.sku }
-        }
+        }.map { it.sku }
     }
 }
