@@ -73,4 +73,16 @@ class TrackerPreferencesTest {
     fun `store filter is cleaned`() {
         assertEquals(setOf("R601", "R488"), TrackerPreferences.parseStoreFilter(" r601, R488 ,,"))
     }
+
+    @Test
+    fun `check interval defaults to 45 s and keeps only offered values`() {
+        val prefs = TrackerPreferences(context)
+        assertEquals(45, prefs.getCheckIntervalSeconds())
+
+        prefs.setCheckIntervalSeconds(30)
+        assertEquals(30, prefs.getCheckIntervalSeconds())
+
+        prefs.setCheckIntervalSeconds(5)
+        assertEquals(30, prefs.getCheckIntervalSeconds())
+    }
 }

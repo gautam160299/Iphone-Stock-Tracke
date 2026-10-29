@@ -276,8 +276,9 @@ class StockTrackerService : Service() {
                     }
                 }
 
-                // 27-33 s: Apple stock often sells out within a minute. While Apple blocks us, wait longer.
-                val jitterDelay = 27_000L + Random.nextLong(0, 6_001L)
+                // The chosen interval +/- 10 %, so checks do not land on an exact beat. While Apple blocks us, wait longer.
+                val intervalMs = preferences.getCheckIntervalSeconds() * 1000L
+                val jitterDelay = intervalMs * 9 / 10 + Random.nextLong(0, intervalMs / 5 + 1)
                 val nextPollMs = maxOf(jitterDelay, blockBackoff.blockedUntilMs - System.currentTimeMillis())
                 Log.d(TAG, "Next poll in ${nextPollMs / 1000}s")
                 delay(nextPollMs)

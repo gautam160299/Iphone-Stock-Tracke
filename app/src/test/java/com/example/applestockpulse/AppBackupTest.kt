@@ -36,7 +36,7 @@ class AppBackupTest {
 
     private val contents = AppBackup.Contents(
         exportedAt = 5_000L,
-        settings = AppBackup.Settings("V6C1T2", 50, "R601", "iPhone Duo", "applestock-abc"),
+        settings = AppBackup.Settings("V6C1T2", 50, "R601", "iPhone Duo", "applestock-abc", checkIntervalSec = 30),
         rules = listOf(WatchRule(id = "rule-1", name = "Duo", selectors = listOf(DeviceSelector("iPhone Duo", setOf("256GB"))), createdAt = 1L)),
         events = listOf(event),
         checks = listOf(check),

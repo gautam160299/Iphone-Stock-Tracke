@@ -22,7 +22,8 @@ object AppBackup {
         val radiusKm: Int,
         val storeFilter: String,
         val browseModel: String,
-        val ntfyTopic: String
+        val ntfyTopic: String,
+        val checkIntervalSec: Int = TrackerPreferences.DEFAULT_CHECK_INTERVAL_SEC
     )
 
     data class Contents(
@@ -52,7 +53,8 @@ object AppBackup {
                 radiusKm = prefs.getRadiusKm(),
                 storeFilter = prefs.getStoreFilter(),
                 browseModel = prefs.getBrowseModel(),
-                ntfyTopic = prefs.getNtfyTopic()
+                ntfyTopic = prefs.getNtfyTopic(),
+                checkIntervalSec = prefs.getCheckIntervalSeconds()
             ),
             rules = WatchRuleStore.get(context).rules.value,
             events = dao.allEvents(),
@@ -78,6 +80,7 @@ object AppBackup {
             prefs.setStoreFilter(storeFilter)
             if (browseModel.isNotBlank()) prefs.setBrowseModel(browseModel)
             if (ntfyTopic.isNotBlank()) prefs.setNtfyTopic(ntfyTopic)
+            prefs.setCheckIntervalSeconds(checkIntervalSec)
         }
 
         val ruleStore = WatchRuleStore.get(context)
@@ -104,6 +107,7 @@ object AppBackup {
                     .put("storeFilter", contents.settings.storeFilter)
                     .put("browseModel", contents.settings.browseModel)
                     .put("ntfyTopic", contents.settings.ntfyTopic)
+                    .put("checkIntervalSec", contents.settings.checkIntervalSec)
             )
             .put("rules", JSONArray(WatchRuleJson.encode(contents.rules)))
             .put("events", JSONArray().apply {
@@ -162,7 +166,8 @@ object AppBackup {
                 radiusKm = settings.optInt("radiusKm", SearchLocation.DEFAULT_RADIUS_KM),
                 storeFilter = settings.optString("storeFilter"),
                 browseModel = settings.optString("browseModel"),
-                ntfyTopic = settings.optString("ntfyTopic")
+                ntfyTopic = settings.optString("ntfyTopic"),
+                checkIntervalSec = settings.optInt("checkIntervalSec", TrackerPreferences.DEFAULT_CHECK_INTERVAL_SEC)
             ),
             rules = WatchRuleJson.decode(root.optJSONArray("rules")?.toString() ?: "[]"),
             events = root.optJSONArray("events").objects().mapNotNull { o ->

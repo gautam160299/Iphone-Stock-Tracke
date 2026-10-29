@@ -30,6 +30,11 @@ class TrackerPreferences(context: Context) {
         const val KEY_TRACKING_ENABLED = "key_tracking_enabled"
         const val KEY_LAST_SEEN_EVENT_ID = "key_last_seen_event_id"
         const val KEY_NTFY_TOPIC = "key_ntfy_topic"
+        const val KEY_CHECK_INTERVAL_SEC = "key_check_interval_sec"
+
+        // Faster checks catch short sales sooner but make an Apple block more likely
+        val CHECK_INTERVAL_OPTIONS_SEC = listOf(30, 45, 60)
+        const val DEFAULT_CHECK_INTERVAL_SEC = 45
         private const val LEGACY_KEY_SELECTED_STORAGE = "key_selected_storage"
         private const val LEGACY_KEY_SELECTED_COLOR = "key_selected_color"
         private const val LEGACY_KEY_SKUS = "key_skus"
@@ -94,6 +99,16 @@ class TrackerPreferences(context: Context) {
 
     fun setRadiusKm(radiusKm: Int) {
         prefs.edit().putInt(KEY_RADIUS_KM, radiusKm).apply()
+    }
+
+    /** Seconds between background checks; one of [CHECK_INTERVAL_OPTIONS_SEC]. */
+    fun getCheckIntervalSeconds(): Int {
+        val saved = prefs.getInt(KEY_CHECK_INTERVAL_SEC, DEFAULT_CHECK_INTERVAL_SEC)
+        return if (saved in CHECK_INTERVAL_OPTIONS_SEC) saved else DEFAULT_CHECK_INTERVAL_SEC
+    }
+
+    fun setCheckIntervalSeconds(seconds: Int) {
+        if (seconds in CHECK_INTERVAL_OPTIONS_SEC) prefs.edit().putInt(KEY_CHECK_INTERVAL_SEC, seconds).apply()
     }
 
     fun getDefaultLocation(): SearchLocation = SearchLocation(getCleanPostalCode(), getRadiusKm())

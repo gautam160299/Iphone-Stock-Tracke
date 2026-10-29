@@ -19,6 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -66,6 +67,7 @@ fun SettingsScreen(
     var radius by remember { mutableStateOf(preferences.getRadiusKm()) }
     var storeFilter by remember { mutableStateOf(preferences.getStoreFilter()) }
     var confirmClear by remember { mutableStateOf(false) }
+    var checkInterval by remember { mutableStateOf(preferences.getCheckIntervalSeconds()) }
     var canUseFullScreenAlarm by remember { mutableStateOf(AlertNotifier.canUseFullScreenAlarm(context)) }
     LifecycleResumeEffect(Unit) {
         canUseFullScreenAlarm = AlertNotifier.canUseFullScreenAlarm(context)
@@ -155,10 +157,32 @@ fun SettingsScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Monitoring", fontWeight = FontWeight.SemiBold)
-                    Text(if (isRunning) "On · checks about every 30 s" else "Off", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (isRunning) "On · checks about every $checkInterval s" else "Off", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Switch(checked = isRunning, onCheckedChange = actions.startOrStop)
             }
+            Text("Check every", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TrackerPreferences.CHECK_INTERVAL_OPTIONS_SEC.forEach { seconds ->
+                    FilterChip(
+                        selected = seconds == checkInterval,
+                        onClick = {
+                            checkInterval = seconds
+                            preferences.setCheckIntervalSeconds(seconds)
+                        },
+                        label = { Text("$seconds s") }
+                    )
+                }
+            }
+            Text(
+                when (checkInterval) {
+                    30 -> "Fastest. Apple can block your network for a while; use it only during a sale you expect."
+                    45 -> "Recommended. Fast enough for most restocks, with less risk of an Apple block."
+                    else -> "Safest. Use it when nothing is expected, or after Apple blocked your network."
+                } + " The change starts after the next check.",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             StatusRow(
                 title = "Battery",
                 status = if (isIgnoringBatteryOptimizations) "Unrestricted — checks continue with the screen off" else "Optimized — Android may stop checks",
