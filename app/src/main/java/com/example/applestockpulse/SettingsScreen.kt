@@ -1,7 +1,10 @@
 package com.example.applestockpulse
 
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,6 +60,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val exportCsv = rememberCsvExporter(historyDao)
+    val backup = rememberBackupActions()
 
     var postal by remember { mutableStateOf(SearchLocation.formatPostalCode(preferences.getPostalCode())) }
     var radius by remember { mutableStateOf(preferences.getRadiusKm()) }
@@ -167,6 +171,16 @@ fun SettingsScreen(
 
         SettingsCard("History") {
             Text("Keeps ${TrackerPreferences.HISTORY_RETENTION_DAYS} days · $eventCount change(s) saved", fontSize = 13.sp)
+            Text(
+                "Back up saves history, alerts and settings to a file. Keep the file in Drive or Downloads. " +
+                    "After a reinstall or on a new phone, tap Restore and choose the file.",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(onClick = backup.export, modifier = Modifier.weight(1f)) { Text("Back up") }
+                OutlinedButton(onClick = backup.restore, modifier = Modifier.weight(1f)) { Text("Restore") }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedButton(onClick = exportCsv, modifier = Modifier.weight(1f)) { Text("Export CSV") }
                 OutlinedButton(onClick = { confirmClear = true }, modifier = Modifier.weight(1f)) { Text("Clear history") }
@@ -203,6 +217,54 @@ fun SettingsScreen(
             dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Cancel") } }
         )
     }
+}
+
+private class BackupActions(val export: () -> Unit, val restore: () -> Unit)
+
+@Composable
+private fun rememberBackupActions(): BackupActions {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val message = withContext(Dispatchers.IO) {
+                try {
+                    "Backup saved: ${AppBackup.export(context, uri)} change(s)"
+                } catch (e: Exception) {
+                    Log.e("SettingsScreen", "Backup failed", e)
+                    "Backup failed: ${e.localizedMessage}"
+                }
+            }
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    val restoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val message = withContext(Dispatchers.IO) {
+                try {
+                    val result = AppBackup.restore(context, uri)
+                    "Restored ${result.eventsAdded} new change(s) of ${result.eventsInFile} and ${result.rules} alert(s)"
+                } catch (e: AppBackup.InvalidBackupException) {
+                    e.message ?: "Not a backup file"
+                } catch (e: Exception) {
+                    Log.e("SettingsScreen", "Restore failed", e)
+                    "Restore failed: ${e.localizedMessage}"
+                }
+            }
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+            requestPoll(context)
+        }
+    }
+
+    return BackupActions(
+        export = { exportLauncher.launch(AppBackup.suggestedFileName()) },
+        // Some file pickers label JSON as plain text or octet-stream
+        restore = { restoreLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
+    )
 }
 
 /** ntfy topic for alarms on a laptop, tablet or second phone. */

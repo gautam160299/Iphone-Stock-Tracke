@@ -70,6 +70,9 @@ interface HistoryDao {
     @Insert
     suspend fun insertCheck(check: CheckLogEntity)
 
+    @Insert
+    suspend fun insertChecks(checks: List<CheckLogEntity>)
+
     @Upsert
     suspend fun upsertStates(states: List<LastStateEntity>)
 
@@ -84,6 +87,15 @@ interface HistoryDao {
 
     @Query("SELECT * FROM check_log WHERE timestamp >= :since ORDER BY timestamp ASC")
     fun observeChecksSince(since: Long): Flow<List<CheckLogEntity>>
+
+    @Query("SELECT * FROM stock_events ORDER BY timestamp ASC, id ASC")
+    suspend fun allEvents(): List<StockEventEntity>
+
+    @Query("SELECT * FROM check_log ORDER BY timestamp ASC, id ASC")
+    suspend fun allChecks(): List<CheckLogEntity>
+
+    @Query("SELECT * FROM last_state")
+    suspend fun allStates(): List<LastStateEntity>
 
     @Query("SELECT COALESCE(MAX(id), 0) FROM stock_events")
     suspend fun maxEventId(): Long
@@ -120,12 +132,46 @@ interface HistoryDao {
         clearStates()
     }
 
+    /**
+     * Adds backed-up history to what this phone has. Rows that are already here are skipped,
+     * so restoring the same file twice changes nothing. Returns the number of events added.
+     */
+    @Transaction
+    suspend fun mergeBackup(
+        events: List<StockEventEntity>,
+        checks: List<CheckLogEntity>,
+        states: List<LastStateEntity>
+    ): Int {
+        val eventKeys = allEvents().map { HistoryBackupKeys.event(it) }.toMutableSet()
+        val newEvents = events.filter { eventKeys.add(HistoryBackupKeys.event(it)) }.map { it.copy(id = 0) }
+        if (newEvents.isNotEmpty()) insertEvents(newEvents)
+
+        val checkKeys = allChecks().map { HistoryBackupKeys.check(it) }.toMutableSet()
+        val newChecks = checks.filter { checkKeys.add(HistoryBackupKeys.check(it)) }.map { it.copy(id = 0) }
+        if (newChecks.isNotEmpty()) insertChecks(newChecks)
+
+        // Keep whichever state was seen last
+        val current = allStates().associateBy { it.storeNumber to it.sku }
+        val newerStates = states.filter { state ->
+            val existing = current[state.storeNumber to state.sku]
+            existing == null || state.lastSeen > existing.lastSeen
+        }
+        if (newerStates.isNotEmpty()) upsertStates(newerStates)
+        return newEvents.size
+    }
+
     @Transaction
     suspend fun record(check: CheckLogEntity, events: List<StockEventEntity>, states: List<LastStateEntity>) {
         insertCheck(check)
         if (events.isNotEmpty()) insertEvents(events)
         if (states.isNotEmpty()) upsertStates(states)
     }
+}
+
+/** What makes two history rows the same, ignoring their database IDs. */
+object HistoryBackupKeys {
+    fun event(e: StockEventEntity) = listOf(e.timestamp, e.storeNumber, e.sku, e.kind)
+    fun check(c: CheckLogEntity) = listOf(c.timestamp, c.postalCode, c.background)
 }
 
 @Database(
