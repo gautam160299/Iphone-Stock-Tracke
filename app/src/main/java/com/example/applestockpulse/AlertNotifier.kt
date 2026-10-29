@@ -91,16 +91,23 @@ object AlertNotifier {
     }
 
     /**
-     * One alarm per store, listing every variant that just came into stock there.
-     * Tapping it opens the Apple product page of the first variant.
+     * One alarm per store, listing every variant that just came into stock there and the
+     * rules that watch them. Tapping it opens the Apple product page of the first variant.
      */
-    fun postStoreAlarm(context: Context, store: StoreInventoryCard, newVariants: List<VariantAvailability>) {
+    fun postStoreAlarm(
+        context: Context,
+        store: StoreInventoryCard,
+        newVariants: List<VariantAvailability>,
+        rules: List<WatchRule>
+    ) {
         if (newVariants.isEmpty()) return
 
         val names = newVariants.map { ProductCatalog.getProductName(it.sku) }
         val title = if (names.size == 1) "🚨 In Stock: ${names.first()}" else "🚨 ${names.size} models in stock"
-        val storeLine = "Apple ${store.storeName} (${store.city})"
+        val distance = store.distanceText.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""
+        val storeLine = "Apple ${store.storeName} (${store.city})$distance"
         val lines = newVariants.joinToString("\n") { "• ${ProductCatalog.getProductName(it.sku)} — ${it.pickupQuote}" }
+        val ruleLine = if (rules.isEmpty()) "" else "\nWatched by: ${rules.joinToString { it.displayName() }}"
 
         postAlarm(
             context,
@@ -108,7 +115,8 @@ object AlertNotifier {
             sku = newVariants.first().sku,
             title = title,
             summary = storeLine,
-            details = "$storeLine\n$lines"
+            details = "$storeLine\n$lines$ruleLine",
+            rules = rules
         )
         Log.i(TAG, "Alarm for store ${store.storeNumber}: ${newVariants.joinToString { it.sku }}")
     }
@@ -132,16 +140,25 @@ object AlertNotifier {
         }
     }
 
-    fun cancelAlarmNotification(context: Context, id: Int) {
+    fun cancel(context: Context, id: Int) {
         NotificationManagerCompat.from(context).cancel(id)
     }
 
-    private fun postAlarm(context: Context, id: Int, sku: String, title: String, summary: String, details: String) {
+    private fun postAlarm(
+        context: Context,
+        id: Int,
+        sku: String,
+        title: String,
+        summary: String,
+        details: String,
+        rules: List<WatchRule> = emptyList()
+    ) {
         ensureChannels(context)
         AlarmPlayer.start(context)
 
-        val fullScreen = alarmActivityIntent(context, AlarmActivity.ACTION_SHOW, id, sku, title, details)
-        val open = alarmActivityIntent(context, AlarmActivity.ACTION_OPEN, id, sku, title, details)
+        val ruleId = rules.firstOrNull()?.id
+        val fullScreen = alarmActivityIntent(context, AlarmActivity.ACTION_SHOW, id, sku, title, details, ruleId)
+        val open = alarmActivityIntent(context, AlarmActivity.ACTION_OPEN, id, sku, title, details, ruleId)
         val stop = PendingIntent.getBroadcast(
             context,
             id,
@@ -149,7 +166,7 @@ object AlertNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
+        val builder = NotificationCompat.Builder(context, ALERT_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_apple_stock)
             .setContentTitle(title)
             .setContentText(summary)
@@ -165,9 +182,17 @@ object AlertNotifier {
             .setDeleteIntent(stop)
             .addAction(android.R.drawable.ic_menu_send, "Open on Apple.ca", open)
             .addAction(android.R.drawable.ic_lock_silent_mode, "Stop alarm", stop)
-            .build()
 
-        notify(context, id, notification)
+        // Android shows three buttons at most; "Details" is on the alarm screen instead
+        if (rules.isNotEmpty()) {
+            builder.addAction(
+                android.R.drawable.ic_lock_silent_mode,
+                if (rules.size == 1) "Mute rule" else "Mute rules",
+                AlarmActionReceiver.mutePendingIntent(context, id, rules.map { it.id })
+            )
+        }
+
+        notify(context, id, builder.build())
         NtfyNotifier.publish(TrackerPreferences(context).getNtfyTarget(), title, details, ProductCatalog.productPageUrl(sku))
     }
 
@@ -177,7 +202,8 @@ object AlertNotifier {
         id: Int,
         sku: String,
         title: String,
-        details: String
+        details: String,
+        ruleId: String?
     ): PendingIntent {
         val intent = Intent(context, AlarmActivity::class.java).apply {
             this.action = action
@@ -186,6 +212,7 @@ object AlertNotifier {
             putExtra(AlarmActivity.EXTRA_SKU, sku)
             putExtra(AlarmActivity.EXTRA_TITLE, title)
             putExtra(AlarmActivity.EXTRA_DETAILS, details)
+            putExtra(AlarmActivity.EXTRA_RULE_ID, ruleId)
         }
         return PendingIntent.getActivity(
             context,

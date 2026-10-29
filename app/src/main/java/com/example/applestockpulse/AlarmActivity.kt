@@ -32,6 +32,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -64,6 +65,7 @@ class AlarmActivity : ComponentActivity() {
         const val EXTRA_SKU = "extra_sku"
         const val EXTRA_TITLE = "extra_title"
         const val EXTRA_DETAILS = "extra_details"
+        const val EXTRA_RULE_ID = "extra_rule_id"
     }
 
     private var alarm by mutableStateOf<Intent?>(null)
@@ -84,6 +86,7 @@ class AlarmActivity : ComponentActivity() {
                     title = current?.getStringExtra(EXTRA_TITLE) ?: "🚨 Apple stock alarm",
                     details = current?.getStringExtra(EXTRA_DETAILS).orEmpty(),
                     onOpen = { openProductPage() },
+                    onDetails = current?.getStringExtra(EXTRA_RULE_ID)?.let { ruleId -> { openRuleDetails(ruleId) } },
                     onStop = {
                         AlarmPlayer.stop()
                         finish()
@@ -116,16 +119,28 @@ class AlarmActivity : ComponentActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
-    /** Stops the alarm, asks to unlock if needed, then opens the Apple page. */
     private fun openProductPage() {
+        val sku = alarm?.getStringExtra(EXTRA_SKU)
+        leaveAlarm(sku?.let { AlertNotifier.productPageIntent(it) })
+    }
+
+    private fun openRuleDetails(ruleId: String) {
+        leaveAlarm(
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                putExtra(MainActivity.EXTRA_OPEN_RULE_ID, ruleId)
+            }
+        )
+    }
+
+    /** Stops the alarm and clears its notification, asks to unlock if needed, then opens [target]. */
+    private fun leaveAlarm(target: Intent?) {
         opening = true
         AlarmPlayer.stop()
-        val current = alarm
-        val sku = current?.getStringExtra(EXTRA_SKU)
-        current?.getIntExtra(EXTRA_NOTIFICATION_ID, 0)?.takeIf { it != 0 }?.let {
-            AlertNotifier.cancelAlarmNotification(this, it)
+        alarm?.getIntExtra(EXTRA_NOTIFICATION_ID, 0)?.takeIf { it != 0 }?.let {
+            AlertNotifier.cancel(this, it)
         }
-        if (sku == null) {
+        if (target == null) {
             finish()
             return
         }
@@ -133,21 +148,21 @@ class AlarmActivity : ComponentActivity() {
         val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && keyguard?.isKeyguardLocked == true) {
             keyguard.requestDismissKeyguard(this, object : KeyguardManager.KeyguardDismissCallback() {
-                override fun onDismissSucceeded() = launchProductPage(sku)
+                override fun onDismissSucceeded() = launch(target)
                 override fun onDismissCancelled() = finish()
                 override fun onDismissError() = finish()
             })
         } else {
-            launchProductPage(sku)
+            launch(target)
         }
     }
 
-    private fun launchProductPage(sku: String) {
+    private fun launch(target: Intent) {
         try {
-            startActivity(AlertNotifier.productPageIntent(sku))
+            startActivity(target)
         } catch (e: Exception) {
-            Log.e(TAG, "Cannot open product page", e)
-            Toast.makeText(this, "Unable to open browser: ${e.message}", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Cannot open $target", e)
+            Toast.makeText(this, "Unable to open: ${e.message}", Toast.LENGTH_SHORT).show()
         }
         finish()
     }
@@ -158,6 +173,7 @@ private fun AlarmScreen(
     title: String,
     details: String,
     onOpen: () -> Unit,
+    onDetails: (() -> Unit)?,
     onStop: () -> Unit,
     onAlarmStopped: () -> Unit
 ) {
@@ -228,6 +244,12 @@ private fun AlarmScreen(
             colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
         ) {
             Text("STOP ALARM", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        }
+        if (onDetails != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            TextButton(onClick = onDetails) {
+                Text("Details in app", color = Color.White, fontSize = 14.sp)
+            }
         }
         Spacer(modifier = Modifier.height(16.dp))
         Text(

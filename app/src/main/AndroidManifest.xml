@@ -56,6 +56,10 @@
                 android:value="personal_inventory_polling" />
         </service>
 
+        <receiver
+            android:name="com.example.applestockpulse.AlarmActionReceiver"
+            android:exported="false" />
+
     </application>
 
 </manifest>

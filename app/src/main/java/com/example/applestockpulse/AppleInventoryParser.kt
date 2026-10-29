@@ -20,6 +20,8 @@ data class StoreInventoryCard(
     val storeName: String,
     val city: String,
     val distanceText: String,
+    // Parsed from distanceText; null when Apple sent no distance
+    val distanceKm: Double? = null,
     val addressText: String,
     val phoneText: String,
     val totalAvailableInStore: Int,
@@ -41,6 +43,17 @@ data class InventoryParseResult(
  * Pure function with no Android state, so it can be unit tested.
  */
 object AppleInventoryParser {
+
+    private val DISTANCE_REGEX = Regex("""(\d+(?:[.,]\d+)?)\s*(km|mi)?""", RegexOption.IGNORE_CASE)
+
+    /**
+     * "10.7 km" -> 10.7, "3 mi" -> 4.83, "" -> null.
+     */
+    fun parseDistanceKm(raw: String): Double? {
+        val match = DISTANCE_REGEX.find(raw) ?: return null
+        val value = match.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return null
+        return if (match.groupValues[2].equals("mi", ignoreCase = true)) value * 1.609344 else value
+    }
 
     fun parse(
         jsonString: String,
@@ -109,6 +122,7 @@ object AppleInventoryParser {
                     storeName = storeName,
                     city = city,
                     distanceText = distanceText,
+                    distanceKm = parseDistanceKm(distanceRaw),
                     addressText = addressText,
                     phoneText = phoneText,
                     totalAvailableInStore = variants.count { it.isAvailable },
