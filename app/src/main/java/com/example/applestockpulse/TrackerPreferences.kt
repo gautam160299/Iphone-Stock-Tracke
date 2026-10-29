@@ -26,6 +26,7 @@ class TrackerPreferences(context: Context) {
         const val KEY_STORE_FILTER = "key_store_filter"
         const val KEY_MUTED_SKUS = "key_muted_skus"
         const val KEY_TRACKING_ENABLED = "key_tracking_enabled"
+        const val KEY_NTFY_TOPIC = "key_ntfy_topic"
         private const val LEGACY_KEY_SKUS = "key_skus"
         private const val LEGACY_KEY_NOTIFIED_SKUS = "key_notified_skus"
 
@@ -147,6 +148,21 @@ class TrackerPreferences(context: Context) {
 
     fun setTrackingEnabled(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_TRACKING_ENABLED, enabled).apply()
+    }
+
+    /**
+     * ntfy topic name or topic URL for alerts on other devices. Blank means off.
+     */
+    fun getNtfyTopic(): String {
+        return prefs.getString(KEY_NTFY_TOPIC, "") ?: ""
+    }
+
+    fun setNtfyTopic(topic: String) {
+        prefs.edit().putString(KEY_NTFY_TOPIC, topic.trim()).apply()
+    }
+
+    fun getNtfyTarget(): NtfyTarget? {
+        return NtfyNotifier.parseTarget(getNtfyTopic())
     }
 
     /**
