@@ -80,6 +80,9 @@ class StockTrackerService : Service() {
     // One request at a time; also guards the alarm bookkeeping below
     private val pollMutex = Mutex()
     private var lastRequestAtMs = 0L
+    private val blockBackoff = BlockBackoff()
+    // Latest monitoring result per postal code, so the Stock screen can reuse it
+    private val lastWatchFetches = mutableMapOf<String, WatchFetch>()
     private var lastPruneAtMs = 0L
     private var previouslyAvailablePairs: Set<String> = emptySet()
     private val lastAlarmAtMs = mutableMapOf<String, Long>()
@@ -118,6 +121,9 @@ class StockTrackerService : Service() {
 
         // Minimum gap between two requests to Apple, so repeated taps cannot flood it
         private const val MIN_REQUEST_GAP_MS = 5_000L
+
+        // The Stock screen reuses a monitoring result younger than this
+        private const val WATCH_REUSE_MS = 45_000L
 
         // A store/SKU pair that flickers in and out of stock alarms at most once per this period
         private const val ALARM_COOLDOWN_MS = 10 * 60 * 1000L
@@ -270,10 +276,11 @@ class StockTrackerService : Service() {
                     }
                 }
 
-                // 27-33 s: Apple stock often sells out within a minute
+                // 27-33 s: Apple stock often sells out within a minute. While Apple blocks us, wait longer.
                 val jitterDelay = 27_000L + Random.nextLong(0, 6_001L)
-                Log.d(TAG, "Next poll in ${jitterDelay / 1000}s")
-                delay(jitterDelay)
+                val nextPollMs = maxOf(jitterDelay, blockBackoff.blockedUntilMs - System.currentTimeMillis())
+                Log.d(TAG, "Next poll in ${nextPollMs / 1000}s")
+                delay(nextPollMs)
             }
         }
     }
@@ -363,7 +370,9 @@ class StockTrackerService : Service() {
                 snapshots[postal] = LocationSnapshot(postal, error = "\"$postal\" is not a valid Canadian postal code.")
                 continue
             }
-            snapshots[postal] = fetchLocation(postal, skus, storeFilter, background)
+            val snapshot = fetchLocation(postal, skus, storeFilter, background)
+            snapshots[postal] = snapshot
+            lastWatchFetches[postal] = WatchFetch(System.currentTimeMillis(), skus.toSet(), snapshot)
         }
 
         val errors = snapshots.values.mapNotNull { snap ->
@@ -413,10 +422,17 @@ class StockTrackerService : Service() {
         val skus = ProductCatalog.getSkusForSelection(model, "All", "All")
         _browseState.update { it.copy(model = model, postalCode = postal, isLoading = true) }
 
-        val snapshot = if (!TrackerPreferences.isValidPostalCode(postal)) {
-            LocationSnapshot(postal, error = "\"$postal\" is not a valid Canadian postal code. Fix it in Settings.")
-        } else {
-            fetchLocation(postal, skus, preferences.getParsedStoreFilter(), background = false)
+        // Monitoring checked this model moments ago: show that instead of asking Apple again
+        val recentWatch = lastWatchFetches[postal]?.takeIf {
+            it.snapshot.error == null &&
+                System.currentTimeMillis() - it.at < WATCH_REUSE_MS &&
+                it.skus.containsAll(skus)
+        }
+        val snapshot = when {
+            !TrackerPreferences.isValidPostalCode(postal) ->
+                LocationSnapshot(postal, error = "\"$postal\" is not a valid Canadian postal code. Fix it in Settings.")
+            recentWatch != null -> recentWatch.snapshot.onlySkus(skus.toSet())
+            else -> fetchLocation(postal, skus, preferences.getParsedStoreFilter(), background = false)
         }
 
         // A newer Browse request for another model may have started meanwhile
@@ -440,9 +456,11 @@ class StockTrackerService : Service() {
         val errors = mutableListOf<String>()
         var lastStatus: Int? = null
         var failed = false
+        var sentAny = false
 
         for (chunk in skus.chunked(MAX_SKUS_PER_REQUEST)) {
             val result = fetchChunk(postalCode, chunk)
+            sentAny = sentAny || result.sent
             lastStatus = result.statusCode ?: lastStatus
             if (result.error != null) {
                 failed = true
@@ -465,7 +483,8 @@ class StockTrackerService : Service() {
         }
 
         val allStores = storesByNumber.values.sortedBy { it.distanceKm ?: Double.MAX_VALUE }
-        recordHistory(postalCode, skus, allStores, success = !failed, background = background)
+        // A check that never reached Apple is not a check
+        if (sentAny) recordHistory(postalCode, skus, allStores, success = !failed, background = background)
 
         val visible = if (storeFilter.isEmpty()) allStores else allStores.filter { it.storeNumber.uppercase() in storeFilter }
         if (allStores.isNotEmpty() && visible.isEmpty()) {
@@ -485,10 +504,15 @@ class StockTrackerService : Service() {
     private data class ChunkResult(
         val statusCode: Int?,
         val parsed: InventoryParseResult?,
-        val error: String?
+        val error: String?,
+        // False when the request was not sent because Apple is blocking us
+        val sent: Boolean = true
     )
 
     private suspend fun fetchChunk(postalCode: String, skus: List<String>): ChunkResult {
+        if (blockBackoff.isBlocked(System.currentTimeMillis())) {
+            return ChunkResult(null, null, blockedMessage(null), sent = false)
+        }
         val waitMs = lastRequestAtMs + MIN_REQUEST_GAP_MS - System.currentTimeMillis()
         if (waitMs > 0) delay(waitMs)
         lastRequestAtMs = System.currentTimeMillis()
@@ -517,14 +541,15 @@ class StockTrackerService : Service() {
             return ChunkResult(null, null, "Network error: ${e.localizedMessage}")
         }
 
-        if (statusCode !in 200..299) {
-            val message = if (statusCode == 541) {
-                "HTTP 541: Apple is blocking or rate-limiting these requests. Retrying in ~30s..."
-            } else {
-                "HTTP $statusCode from Apple server"
-            }
-            return ChunkResult(statusCode, null, message)
+        if (BlockBackoff.isBlock(statusCode)) {
+            blockBackoff.onBlocked(System.currentTimeMillis())
+            Log.w(TAG, "Apple answered HTTP $statusCode; no requests until ${blockBackoff.blockedUntilMs}")
+            return ChunkResult(statusCode, null, blockedMessage(statusCode))
         }
+        if (statusCode !in 200..299) {
+            return ChunkResult(statusCode, null, "HTTP $statusCode from Apple server")
+        }
+        blockBackoff.onSuccess()
 
         return try {
             ChunkResult(statusCode, AppleInventoryParser.parse(body, skus, emptySet(), ""), null)
@@ -532,6 +557,12 @@ class StockTrackerService : Service() {
             Log.e(TAG, "Error parsing Apple stores JSON", e)
             ChunkResult(statusCode, null, "Apple sent a response that is not inventory data (HTTP $statusCode). It may be a block page.")
         }
+    }
+
+    private fun blockedMessage(statusCode: Int?): String {
+        val until = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(blockBackoff.blockedUntilMs))
+        val code = statusCode?.let { " (HTTP $it)" } ?: ""
+        return "Apple is blocking requests from this network$code. The app waits and tries again at $until by itself."
     }
 
     private suspend fun recordHistory(
@@ -705,3 +736,14 @@ private suspend fun Call.await(): Pair<Int, String> = suspendCancellableCoroutin
         }
     })
 }
+
+private data class WatchFetch(val at: Long, val skus: Set<String>, val snapshot: LocationSnapshot)
+
+/** The same result, limited to [skus]; for showing one model out of a check of several. */
+private fun LocationSnapshot.onlySkus(skus: Set<String>): LocationSnapshot = copy(
+    stores = stores.map { store ->
+        val variants = store.variants.filter { it.sku in skus }
+        store.copy(variants = variants, totalAvailableInStore = variants.count { it.isAvailable })
+    },
+    unknownSkus = unknownSkus.filter { it in skus }
+)
