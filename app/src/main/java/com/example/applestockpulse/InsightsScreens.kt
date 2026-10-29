@@ -70,23 +70,26 @@ fun RecentChangesScreen(
     initialStore: String?,
     lastSeenEventIdAtOpen: Long,
     historyDao: HistoryDao,
-    onSeen: (Long) -> Unit
+    onSeen: (Long) -> Unit,
+    // Only events for these SKUs (the model shown on the Stock screen); null = all
+    skuScope: Set<String>? = null
 ) {
     var watchedOnly by remember { mutableStateOf(false) }
-    var storeFilter by remember { mutableStateOf(initialStore) }
+    var storeFilter by remember(initialStore) { mutableStateOf(initialStore) }
     var showStores by remember { mutableStateOf(false) }
     val exportCsv = rememberCsvExporter(historyDao)
 
     val watchedSkus = remember(rules) { rules.flatMap { it.skus() }.toSet() }
-    val stores = remember(events) { events.associate { it.storeNumber to it.storeName }.toList().sortedBy { it.second } }
+    val scopedEvents = remember(events, skuScope) { if (skuScope == null) events else events.filter { it.sku in skuScope } }
+    val stores = remember(scopedEvents) { scopedEvents.associate { it.storeNumber to it.storeName }.toList().sortedBy { it.second } }
 
     // Opening the screen marks everything as seen; rows newer than the old mark keep their dot
     LaunchedEffect(events) {
         events.maxOfOrNull { it.id }?.let(onSeen)
     }
 
-    val rows = remember(events, checks, watchedOnly, storeFilter, watchedSkus) {
-        val filtered = events.filter { e ->
+    val rows = remember(scopedEvents, checks, watchedOnly, storeFilter, watchedSkus) {
+        val filtered = scopedEvents.filter { e ->
             (!watchedOnly || e.sku in watchedSkus) && (storeFilter == null || e.storeNumber == storeFilter)
         }
         val now = System.currentTimeMillis()
@@ -109,7 +112,7 @@ fun RecentChangesScreen(
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp + LocalDockPadding.current),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
@@ -137,7 +140,7 @@ fun RecentChangesScreen(
             }
         }
 
-        if (events.isEmpty()) {
+        if (scopedEvents.isEmpty()) {
             item {
                 EmptyState(
                     Icons.Default.History,
@@ -237,8 +240,9 @@ fun PatternsScreen(
     events: List<StockEventEntity>,
     checks: List<CheckLogEntity>,
     rules: List<WatchRule>,
-    initialRuleId: String?,
-    actions: AppActions
+    // e.g. "rule_<id>", "model_iPhone Duo", "watched"
+    initialTargetKey: String,
+    onStoreClick: (String) -> Unit
 ) {
     val targets = remember(rules) {
         buildList {
@@ -250,7 +254,7 @@ fun PatternsScreen(
             }
         }
     }
-    var targetKey by remember { mutableStateOf(initialRuleId?.let { "rule_$it" } ?: "watched") }
+    var targetKey by remember(initialTargetKey) { mutableStateOf(initialTargetKey) }
     val target = targets.find { it.key == targetKey } ?: targets.first()
     var storeNumber by remember { mutableStateOf<String?>(null) }
     var rangeDays by remember { mutableStateOf(30) }
@@ -264,7 +268,7 @@ fun PatternsScreen(
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp + LocalDockPadding.current),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
@@ -349,7 +353,7 @@ fun PatternsScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { actions.navigate(Screen.RecentChanges(store.storeNumber)) }
+                                .clickable { onStoreClick(store.storeNumber) }
                                 .padding(vertical = 6.dp)
                         ) {
                             Text("${index + 1}", fontWeight = FontWeight.Bold, modifier = Modifier.width(24.dp))

@@ -60,15 +60,23 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
+// Space the floating dock covers at the bottom; scrolling screens add it to their end padding
+val LocalDockPadding = androidx.compose.runtime.compositionLocalOf { 0.dp }
+
 // Fixed status colours, the same on every screen
 object StockColors {
-    val InStock = Color(0xFF10B981)
-    val InStockSoft = Color(0x1F10B981)
-    val Watched = Color(0xFFD97706)
-    val WatchedSoft = Color(0x33F59E0B)
-    val Error = Color(0xFFEF4444)
-    val ErrorSoft = Color(0x22EF4444)
-    val Idle = Color(0xFF94A3B8)
+    val InStock = Color(0xFF3DDC97)
+    val InStockSoft = Color(0x1A3DDC97)
+    val OnInStock = Color(0xFF06261A)
+    val Watched = Color(0xFFF6B445)
+    val WatchedSoft = Color(0x29F6B445)
+    val OnWatched = Color(0xFF0B0D12)
+    val Error = Color(0xFFFF7A7A)
+    val ErrorSoft = Color(0x22FF7A7A)
+    val Idle = Color(0xFF5B6578)
+    val Card = Color(0xFF141821)
+    val CardBorder = Color(0xFF1F2533)
+    val Link = Color(0xFF8AB4FF)
 }
 
 object TimeText {

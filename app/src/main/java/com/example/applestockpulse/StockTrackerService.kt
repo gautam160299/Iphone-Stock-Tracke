@@ -339,10 +339,17 @@ class StockTrackerService : Service() {
             return
         }
 
-        // One group of SKUs per postal code; each rule applies its own radius afterwards
+        // One group of SKUs per postal code; each rule applies its own radius afterwards.
+        // Every colour and storage of a watched model is checked, so restock history covers
+        // the whole model (alarms still follow the rules only).
         val skusByPostal = rules
             .groupBy { it.effectiveLocation(defaultLocation).postalCode }
-            .mapValues { (_, group) -> group.flatMap { it.skus() }.distinct().sorted() }
+            .mapValues { (_, group) ->
+                val models = group.flatMap { rule -> rule.selectors.map { it.model } }.distinct()
+                (models.flatMap { ProductCatalog.getSkusForSelection(it, "All", "All") } + group.flatMap { it.skus() })
+                    .distinct()
+                    .sorted()
+            }
             .filterValues { it.isNotEmpty() }
 
         val skuCount = skusByPostal.values.sumOf { it.size }

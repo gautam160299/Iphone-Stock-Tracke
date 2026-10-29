@@ -32,6 +32,32 @@ data class DeviceSelector(
     fun label(): String = "$model · ${storageLabel()} · ${colorLabel()}"
 }
 
+sealed interface NotifyDecision {
+    // No alert covers this phone: add a one-phone alert
+    data class Create(val rule: WatchRule) : NotifyDecision
+    // One-phone alerts for this phone exist: remove them
+    data class Remove(val rules: List<WatchRule>) : NotifyDecision
+    // Only a wider group covers it; that group is edited in My alerts
+    data class Covered(val rule: WatchRule) : NotifyDecision
+}
+
+/**
+ * What one tap on a Notify cell does.
+ */
+object NotifyToggle {
+    fun decide(rules: List<WatchRule>, sku: String): NotifyDecision? {
+        val product = ProductCatalog.getProduct(sku) ?: return null
+        val covering = rules.filter { sku in it.skus() }
+        if (covering.isEmpty()) {
+            return NotifyDecision.Create(
+                WatchRule(selectors = listOf(DeviceSelector(product.model, setOf(product.storage), setOf(product.color))))
+            )
+        }
+        val single = covering.filter { it.isSinglePhone }
+        return if (single.isNotEmpty()) NotifyDecision.Remove(single) else NotifyDecision.Covered(covering.first())
+    }
+}
+
 /**
  * Postal code plus search radius. Rules use the default location unless they set their own.
  */
@@ -64,8 +90,13 @@ data class WatchRule(
     fun skus(): List<String> = selectors.flatMap { it.skus() }.distinct()
 
     fun displayName(): String = name.ifBlank {
-        selectors.map { it.model }.distinct().joinToString(" + ")
+        // A one-phone alert (from Notify) reads as that phone
+        skus().singleOrNull()?.let { ProductCatalog.getProductName(it) }
+            ?: selectors.map { it.model }.distinct().joinToString(" + ")
     }
+
+    // Exactly one phone, as made by a Notify tap
+    val isSinglePhone: Boolean get() = selectors.size == 1 && skus().size == 1
 
     fun effectiveLocation(default: SearchLocation): SearchLocation = location ?: default
 }

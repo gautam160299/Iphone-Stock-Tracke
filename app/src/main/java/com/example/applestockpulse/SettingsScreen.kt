@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -162,6 +163,7 @@ fun SettingsScreen(
             )
             Text("Stock data comes from Apple's public in-store pickup page. Apple can change or block it at any time.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        Spacer(modifier = Modifier.height(LocalDockPadding.current))
     }
 
     if (confirmClear) {

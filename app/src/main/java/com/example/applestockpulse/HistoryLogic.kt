@@ -109,6 +109,8 @@ data class PatternSummary(
     val coverage: Double,
     val restockCount: Int,
     val restocksLast7Days: Int,
+    // Newest restock in the range; first sightings are not restocks
+    val lastRestockAt: Long?,
     val restocksByHour: IntArray,
     // [weekday 0=Mon..6=Sun][hour]
     val restocksByWeekdayHour: Array<IntArray>,
@@ -197,6 +199,7 @@ object PatternsCalculator {
             coverage = coverage,
             restockCount = restocks.size,
             restocksLast7Days = restocks.count { it.third >= now - 7 * DAY_MS },
+            lastRestockAt = restocks.maxOfOrNull { it.third },
             restocksByHour = byHour,
             restocksByWeekdayHour = byWeekdayHour,
             medianSellOutMinutes = median,

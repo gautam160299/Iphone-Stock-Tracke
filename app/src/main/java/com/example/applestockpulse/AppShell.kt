@@ -7,52 +7,50 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.filled.GridView
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Insights
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material3.Badge
-import androidx.compose.material3.DrawerValue
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalDrawerSheet
-import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.NavigationDrawerItem
-import androidx.compose.material3.NavigationDrawerItemDefaults
-import androidx.compose.material3.PermanentDrawerSheet
-import androidx.compose.material3.PermanentNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -63,50 +61,64 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.HazeStyle
+import dev.chrisbanes.haze.HazeTint
+import dev.chrisbanes.haze.haze
+import dev.chrisbanes.haze.hazeChild
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 sealed interface Screen {
-    data object Watching : Screen
-    data object Browse : Screen
-    data class RecentChanges(val storeNumber: String? = null) : Screen
-    data class Patterns(val ruleId: String? = null) : Screen
+    data class Stock(val tab: Int = StockTab.STOCK, val storeNumber: String? = null) : Screen
+    data object Alerts : Screen
     data object Settings : Screen
     data object Help : Screen
     data class RuleDetail(val ruleId: String) : Screen
+    data class Patterns(val ruleId: String) : Screen
 }
 
 private val Screen.title: String
     get() = when (this) {
-        Screen.Watching -> "Watching"
-        Screen.Browse -> "Browse"
-        is Screen.RecentChanges -> "Recent changes"
-        is Screen.Patterns -> "Patterns"
+        is Screen.Stock -> "Stock"
+        Screen.Alerts -> "My alerts"
         Screen.Settings -> "Settings"
         Screen.Help -> "Help"
-        is Screen.RuleDetail -> "Device group"
+        is Screen.RuleDetail -> "Alert"
+        is Screen.Patterns -> "Patterns"
     }
 
-private val Screen.isTopLevel: Boolean get() = this !is Screen.RuleDetail
+// Screens in the dock; the others open on top of one of them and show a back arrow
+private val Screen.isTopLevel: Boolean get() = this !is Screen.RuleDetail && this !is Screen.Patterns
+
+// Space reserved under scrolling content for the floating dock
+private val DOCK_SPACE = 112.dp
 
 /**
- * Everything the screens share: live service state, saved rules, history and permissions.
+ * Everything the screens share: navigation, the alert editor, monitoring and alerts.
  */
 class AppActions(
     val navigate: (Screen) -> Unit,
     val openEditor: (WatchRule) -> Unit,
     val startOrStop: (Boolean) -> Unit,
     val requestNotifications: () -> Unit,
-    val showUndoDelete: (WatchRule) -> Unit
+    val showUndoDelete: (WatchRule) -> Unit,
+    // One tap on a Notify cell: alert on, alert off, or point to the group that covers it
+    val toggleNotify: (String) -> Unit
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -128,13 +140,13 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
     val checks by remember { historyDao.observeChecksSince(historySince) }.collectAsState(initial = emptyList())
     var lastSeenEventId by remember { mutableLongStateOf(preferences.getLastSeenEventId()) }
 
-    // Navigation: a small back stack; top-level screens sit on top of Watching
-    var backStack by remember { mutableStateOf(listOf<Screen>(Screen.Watching)) }
+    // Navigation: a small back stack; the dock screens sit on top of Stock
+    var backStack by remember { mutableStateOf(listOf<Screen>(Screen.Stock())) }
     val current = backStack.last()
     fun navigate(screen: Screen) {
         backStack = when {
-            screen == Screen.Watching -> listOf(Screen.Watching)
-            screen.isTopLevel -> listOf(Screen.Watching, screen)
+            screen is Screen.Stock -> listOf(screen)
+            screen.isTopLevel -> listOf(Screen.Stock(), screen)
             else -> backStack + screen
         }
     }
@@ -142,7 +154,7 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
     val pendingRule by openRuleRequest.collectAsState()
     LaunchedEffect(pendingRule) {
         pendingRule?.let { id ->
-            if (ruleStore.get(id) != null) navigate(Screen.RuleDetail(id))
+            if (ruleStore.get(id) != null) backStack = listOf(Screen.Stock(), Screen.Alerts, Screen.RuleDetail(id))
             openRuleRequest.value = null
         }
     }
@@ -150,7 +162,7 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
     // Notifications: runtime permission (Android 13+) plus the app and alarm-channel switches
     var hasNotificationPermission by remember { mutableStateOf(AlertNotifier.canPostAlarms(context)) }
     var isIgnoringBatteryOptimizations by remember { mutableStateOf(checkBatteryOptimization(context)) }
-    // Set when "Start" opened the permission dialog, so monitoring starts once the user allows it
+    // Set when starting monitoring opened the permission dialog, so it starts once the user allows it
     var startAfterPermission by remember { mutableStateOf(false) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
@@ -181,6 +193,11 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
         }
     }
 
+    // Monitoring without notifications would detect stock but never alarm
+    fun startMonitoring() {
+        if (hasNotificationPermission) startTrackerService(context) else requestNotifications(startAfter = true)
+    }
+
     // Re-check each time the screen comes back, e.g. from the Settings app
     LifecycleResumeEffect(Unit) {
         hasNotificationPermission = AlertNotifier.canPostAlarms(context)
@@ -188,7 +205,7 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
         onPauseOrDispose { }
     }
 
-    // First launch of the process: show live data without waiting for monitoring
+    // First launch of the process: show live alert status without waiting for monitoring
     LaunchedEffect(Unit) {
         if (uiState.snapshots.isEmpty() && rules.isNotEmpty()) requestPoll(context)
     }
@@ -196,30 +213,55 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
     var editorDraft by remember { mutableStateOf<WatchRule?>(null) }
     val snackbarHostState = remember { SnackbarHostState() }
 
+    fun snackbar(message: String, action: String? = null, onAction: () -> Unit = {}) {
+        scope.launch {
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result = snackbarHostState.showSnackbar(message, actionLabel = action, withDismissAction = action == null)
+            if (result == SnackbarResult.ActionPerformed) onAction()
+        }
+    }
+
     val actions = AppActions(
         navigate = ::navigate,
         openEditor = { editorDraft = it },
         startOrStop = { start ->
-            if (!start) {
-                stopTrackerService(context)
-            } else if (rules.isEmpty()) {
-                Toast.makeText(context, "Add a device to watch first.", Toast.LENGTH_SHORT).show()
-                editorDraft = WatchRule(selectors = listOf(DeviceSelector(TrackerPreferences.DEFAULT_MODEL)))
-            } else if (hasNotificationPermission) {
-                startTrackerService(context)
-            } else {
-                // Monitoring without notifications would detect stock but never alarm
-                requestNotifications(startAfter = true)
+            when {
+                !start -> stopTrackerService(context)
+                ruleStore.rules.value.isEmpty() -> {
+                    navigate(Screen.Stock())
+                    snackbar("Tap Notify on a phone first, so the app knows what to watch.")
+                }
+                else -> startMonitoring()
             }
         },
         requestNotifications = { requestNotifications(startAfter = false) },
         showUndoDelete = { rule ->
-            scope.launch {
-                val result = snackbarHostState.showSnackbar("Deleted ${rule.displayName()}", actionLabel = "Undo")
-                if (result == SnackbarResult.ActionPerformed) {
-                    ruleStore.upsert(rule)
+            snackbar("Deleted ${rule.displayName()}", "Undo") {
+                ruleStore.upsert(rule)
+                requestPoll(context)
+            }
+        },
+        toggleNotify = { sku ->
+            when (val decision = NotifyToggle.decide(ruleStore.rules.value, sku)) {
+                is NotifyDecision.Create -> {
+                    ruleStore.upsert(decision.rule)
                     requestPoll(context)
+                    if (!isRunning) startMonitoring()
+                    snackbar("Alert on: ${decision.rule.displayName()}")
                 }
+                is NotifyDecision.Remove -> {
+                    decision.rules.forEach { ruleStore.delete(it.id) }
+                    requestPoll(context)
+                    snackbar("Alert off: ${ProductCatalog.getProductName(sku)}", "Undo") {
+                        decision.rules.forEach { ruleStore.upsert(it) }
+                        requestPoll(context)
+                    }
+                }
+                is NotifyDecision.Covered -> snackbar(
+                    "Part of your group “${decision.rule.displayName()}”",
+                    "Edit"
+                ) { editorDraft = decision.rule }
+                null -> Unit
             }
         }
     )
@@ -228,64 +270,35 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
         rules.associate { it.id to RuleStatusCalculator.statusFor(it, defaultLocation, uiState.snapshots) }
     }
     val inStockRuleCount = statuses.values.count { it.inStock }
-    val unreadCount = events.count { it.id > lastSeenEventId && it.kind != StockEventKind.SOLD_OUT }
 
-    val isWide = LocalConfiguration.current.screenWidthDp >= 600
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    BackHandler(enabled = backStack.size > 1) { backStack = backStack.dropLast(1) }
 
-    BackHandler(enabled = drawerState.isOpen) { scope.launch { drawerState.close() } }
-    BackHandler(enabled = !drawerState.isOpen && backStack.size > 1) { backStack = backStack.dropLast(1) }
+    val hazeState = remember { HazeState() }
+    val dockTab = backStack.lastOrNull { it.isTopLevel } ?: Screen.Stock()
 
-    val drawerContent: @Composable () -> Unit = {
-        DrawerContent(
-            current = current,
-            isRunning = isRunning,
-            hasError = uiState.error != null,
-            lastChecked = uiState.lastCheckedTimestamp,
-            location = defaultLocation,
-            inStockRuleCount = inStockRuleCount,
-            unreadCount = unreadCount,
-            onToggleMonitoring = actions.startOrStop,
-            onSelect = { screen ->
-                navigate(screen)
-                scope.launch { drawerState.close() }
-            },
-            onTestAlarm = {
-                if (hasNotificationPermission) {
-                    AlertNotifier.postTestAlarm(context)
-                    Toast.makeText(context, "Test alarm sent", Toast.LENGTH_SHORT).show()
-                } else {
-                    requestNotifications(startAfter = false)
-                }
-                scope.launch { drawerState.close() }
-            }
-        )
-    }
-
-    val content: @Composable () -> Unit = {
+    Box(modifier = Modifier.fillMaxSize()) {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            containerColor = MaterialTheme.colorScheme.background,
+            snackbarHost = {
+                SnackbarHost(snackbarHostState, modifier = Modifier.padding(bottom = DOCK_SPACE - 16.dp))
+            },
             topBar = {
                 Column {
                     TopAppBar(
-                        title = { Text(current.title, fontWeight = FontWeight.Bold) },
+                        title = { Text(current.title, fontWeight = FontWeight.ExtraBold, fontSize = 22.sp) },
                         navigationIcon = {
-                            when {
-                                !current.isTopLevel -> IconButton(onClick = { backStack = backStack.dropLast(1) }) {
+                            if (!current.isTopLevel) {
+                                IconButton(onClick = { backStack = backStack.dropLast(1) }) {
                                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                                }
-                                !isWide -> IconButton(onClick = { scope.launch { drawerState.open() } }) {
-                                    Icon(Icons.Default.Menu, contentDescription = "Open menu")
                                 }
                             }
                         },
                         actions = {
-                            PulseIndicator(isActive = isRunning, hasError = uiState.error != null)
-                            Spacer(modifier = Modifier.width(4.dp))
-                            if (current == Screen.Watching || current is Screen.RuleDetail) {
+                            MonitoringPill(isRunning = isRunning, hasError = uiState.error != null) { actions.startOrStop(!isRunning) }
+                            if (current is Screen.Stock || current == Screen.Alerts || current is Screen.RuleDetail) {
                                 IconButton(onClick = {
-                                    requestPoll(context)
+                                    if (current is Screen.Stock) requestBrowsePoll(context, preferences.getBrowseModel()) else requestPoll(context)
                                     Toast.makeText(context, "Checking Apple stock…", Toast.LENGTH_SHORT).show()
                                 }) {
                                     Icon(Icons.Default.Refresh, contentDescription = "Check now")
@@ -293,9 +306,10 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
                             } else {
                                 Spacer(modifier = Modifier.width(8.dp))
                             }
-                        }
+                        },
+                        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
                     )
-                    if (uiState.isChecking && (current == Screen.Watching || current is Screen.RuleDetail)) {
+                    if (uiState.isChecking && (current == Screen.Alerts || current is Screen.RuleDetail)) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
                 }
@@ -304,100 +318,106 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
             val screenModifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-            when (val screen = current) {
-                Screen.Watching -> WatchingScreen(
-                    modifier = screenModifier,
-                    rules = rules,
-                    statuses = statuses,
-                    uiState = uiState,
-                    isRunning = isRunning,
-                    defaultLocation = defaultLocation,
-                    latestEvent = events.firstOrNull { it.kind != StockEventKind.SOLD_OUT },
-                    hasNotificationPermission = hasNotificationPermission,
-                    isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
-                    ruleStore = ruleStore,
-                    actions = actions
-                )
-                is Screen.RuleDetail -> {
-                    val rule = rules.find { it.id == screen.ruleId }
-                    if (rule == null) {
-                        LaunchedEffect(Unit) { backStack = listOf(Screen.Watching) }
-                    } else {
-                        RuleDetailScreen(
+            CompositionLocalProvider(LocalDockPadding provides DOCK_SPACE) {
+                Box(modifier = Modifier
+                    .fillMaxSize()
+                    .haze(hazeState)) {
+                    when (val screen = current) {
+                        is Screen.Stock -> StockScreen(
                             modifier = screenModifier,
-                            rule = rule,
-                            status = statuses[rule.id],
+                            initialTab = screen.tab,
+                            initialStore = screen.storeNumber,
+                            preferences = preferences,
+                            defaultLocation = defaultLocation,
+                            rules = rules,
                             events = events,
-                            ruleStore = ruleStore,
-                            actions = actions,
-                            onDeleted = { backStack = backStack.dropLast(1) }
+                            checks = checks,
+                            uiState = uiState,
+                            isRunning = isRunning,
+                            hasNotificationPermission = hasNotificationPermission,
+                            isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
+                            historyDao = historyDao,
+                            lastSeenEventId = lastSeenEventId,
+                            onSeen = { maxId ->
+                                if (maxId > lastSeenEventId) {
+                                    lastSeenEventId = maxId
+                                    preferences.setLastSeenEventId(maxId)
+                                }
+                            },
+                            actions = actions
                         )
+                        Screen.Alerts -> WatchingScreen(
+                            modifier = screenModifier,
+                            rules = rules,
+                            statuses = statuses,
+                            uiState = uiState,
+                            isRunning = isRunning,
+                            defaultLocation = defaultLocation,
+                            latestEvent = events.firstOrNull { it.kind != StockEventKind.SOLD_OUT },
+                            hasNotificationPermission = hasNotificationPermission,
+                            isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
+                            ruleStore = ruleStore,
+                            actions = actions
+                        )
+                        is Screen.RuleDetail -> {
+                            val rule = rules.find { it.id == screen.ruleId }
+                            if (rule == null) {
+                                LaunchedEffect(Unit) { backStack = backStack.dropLast(1) }
+                            } else {
+                                RuleDetailScreen(
+                                    modifier = screenModifier,
+                                    rule = rule,
+                                    status = statuses[rule.id],
+                                    events = events,
+                                    ruleStore = ruleStore,
+                                    actions = actions,
+                                    onDeleted = { backStack = backStack.dropLast(1) }
+                                )
+                            }
+                        }
+                        is Screen.Patterns -> PatternsScreen(
+                            modifier = screenModifier,
+                            events = events,
+                            checks = checks,
+                            rules = rules,
+                            initialTargetKey = "rule_${screen.ruleId}",
+                            onStoreClick = { store -> navigate(Screen.Stock(tab = StockTab.CHANGES, storeNumber = store)) }
+                        )
+                        Screen.Settings -> SettingsScreen(
+                            modifier = screenModifier,
+                            preferences = preferences,
+                            historyDao = historyDao,
+                            isRunning = isRunning,
+                            hasNotificationPermission = hasNotificationPermission,
+                            isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
+                            eventCount = events.size,
+                            unknownSkus = uiState.snapshots.values.flatMap { it.unknownSkus }.distinct(),
+                            actions = actions,
+                            onLocationSaved = { location ->
+                                defaultLocation = location
+                                requestPoll(context)
+                            }
+                        )
+                        Screen.Help -> HelpScreen(modifier = screenModifier)
                     }
                 }
-                Screen.Browse -> BrowseScreen(
-                    modifier = screenModifier,
-                    preferences = preferences,
-                    defaultLocation = defaultLocation,
-                    rules = rules,
-                    events = events,
-                    actions = actions
-                )
-                is Screen.RecentChanges -> RecentChangesScreen(
-                    modifier = screenModifier,
-                    events = events,
-                    checks = checks,
-                    rules = rules,
-                    initialStore = screen.storeNumber,
-                    lastSeenEventIdAtOpen = remember(screen) { lastSeenEventId },
-                    historyDao = historyDao,
-                    onSeen = { maxId ->
-                        if (maxId > lastSeenEventId) {
-                            lastSeenEventId = maxId
-                            preferences.setLastSeenEventId(maxId)
-                        }
-                    }
-                )
-                is Screen.Patterns -> PatternsScreen(
-                    modifier = screenModifier,
-                    events = events,
-                    checks = checks,
-                    rules = rules,
-                    initialRuleId = screen.ruleId,
-                    actions = actions
-                )
-                Screen.Settings -> SettingsScreen(
-                    modifier = screenModifier,
-                    preferences = preferences,
-                    historyDao = historyDao,
-                    isRunning = isRunning,
-                    hasNotificationPermission = hasNotificationPermission,
-                    isIgnoringBatteryOptimizations = isIgnoringBatteryOptimizations,
-                    eventCount = events.size,
-                    unknownSkus = uiState.snapshots.values.flatMap { it.unknownSkus }.distinct(),
-                    actions = actions,
-                    onLocationSaved = { location ->
-                        defaultLocation = location
-                        requestPoll(context)
-                    }
-                )
-                Screen.Help -> HelpScreen(modifier = screenModifier)
             }
         }
-    }
 
-    if (isWide) {
-        PermanentNavigationDrawer(drawerContent = {
-            PermanentDrawerSheet(modifier = Modifier.width(280.dp)) { drawerContent() }
-        }) {
-            content()
-        }
-    } else {
-        ModalNavigationDrawer(
-            drawerState = drawerState,
-            drawerContent = { ModalDrawerSheet(modifier = Modifier.width(300.dp)) { drawerContent() } }
-        ) {
-            content()
-        }
+        FloatingDock(
+            hazeState = hazeState,
+            selected = dockTab,
+            alertBadge = when {
+                inStockRuleCount > 0 -> inStockRuleCount
+                else -> rules.size
+            },
+            alertBadgeInStock = inStockRuleCount > 0,
+            onSelect = ::navigate,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(bottom = 14.dp)
+        )
     }
 
     editorDraft?.let { draft ->
@@ -410,105 +430,140 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
                 ruleStore.upsert(rule)
                 editorDraft = null
                 requestPoll(context)
-                Toast.makeText(context, "Saved ${rule.displayName()}", Toast.LENGTH_SHORT).show()
+                if (!isRunning) startMonitoring()
+                snackbar("Saved ${rule.displayName()}")
             }
         )
     }
 }
 
 @Composable
-private fun DrawerContent(
-    current: Screen,
-    isRunning: Boolean,
-    hasError: Boolean,
-    lastChecked: Long?,
-    location: SearchLocation,
-    inStockRuleCount: Int,
-    unreadCount: Int,
-    onToggleMonitoring: (Boolean) -> Unit,
-    onSelect: (Screen) -> Unit,
-    onTestAlarm: () -> Unit
-) {
-    Column(
+private fun MonitoringPill(isRunning: Boolean, hasError: Boolean, onClick: () -> Unit) {
+    val color = when {
+        hasError && isRunning -> StockColors.Error
+        isRunning -> StockColors.InStock
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
-            .fillMaxHeight()
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 12.dp)
+            .height(32.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (isRunning) color.copy(alpha = 0.12f) else Color.Transparent)
+            .border(1.dp, if (isRunning) color.copy(alpha = 0.5f) else MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+            .selectable(selected = isRunning, role = Role.Switch, onClick = onClick)
+            .padding(horizontal = 12.dp)
+            .testTag("monitoring_pill")
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PulseIndicator(isActive = isRunning, hasError = hasError, size = 10)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        if (isRunning) "MONITORING ON" else "MONITORING OFF",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 1.sp,
-                        color = if (isRunning) StockColors.InStock else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Text(
-                    "Near ${location.label()}" + (lastChecked?.let { " · ${TimeText.time(it)}" } ?: ""),
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        PulseIndicator(isActive = isRunning, hasError = hasError, size = 8)
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(if (isRunning) "Monitoring" else "Paused", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = color)
+    }
+}
+
+private data class DockItem(val screen: Screen, val label: String, val icon: ImageVector)
+
+/**
+ * Apple-style floating dock: frosted glass pill, the active tile raised and amber with a dot below.
+ */
+@Composable
+private fun FloatingDock(
+    hazeState: HazeState,
+    selected: Screen,
+    alertBadge: Int,
+    alertBadgeInStock: Boolean,
+    onSelect: (Screen) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val items = listOf(
+        DockItem(Screen.Stock(), "Stock", Icons.Default.GridView),
+        DockItem(Screen.Alerts, "Alerts", Icons.Default.NotificationsActive),
+        DockItem(Screen.Settings, "Settings", Icons.Default.Tune),
+        DockItem(Screen.Help, "Help", Icons.AutoMirrored.Filled.HelpOutline)
+    )
+    val shape = RoundedCornerShape(30.dp)
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.Bottom,
+        modifier = modifier
+            .shadow(24.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+            .clip(shape)
+            .hazeChild(
+                hazeState,
+                HazeStyle(
+                    backgroundColor = MaterialTheme.colorScheme.background,
+                    tint = HazeTint(Color(0xB81A1E2A)),
+                    blurRadius = 24.dp,
+                    noiseFactor = 0.05f,
+                    fallbackTint = HazeTint(Color(0xF01A1E2A))
                 )
+            )
+            .border(1.dp, Color(0x1AFFFFFF), shape)
+            .padding(start = 10.dp, end = 10.dp, top = 8.dp, bottom = 6.dp)
+            .testTag("floating_dock")
+    ) {
+        items.forEach { item ->
+            val active = when (item.screen) {
+                is Screen.Stock -> selected is Screen.Stock
+                else -> selected == item.screen
             }
-            Switch(checked = isRunning, onCheckedChange = onToggleMonitoring)
+            val badge = if (item.screen == Screen.Alerts && alertBadge > 0) alertBadge else null
+            DockTile(item, active, badge, badgeInStock = alertBadgeInStock) { onSelect(item.screen) }
         }
-        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-
-        DrawerSection("Monitor")
-        DrawerItem("Watching", Icons.Default.Visibility, current == Screen.Watching, inStockRuleCount, StockColors.InStock) { onSelect(Screen.Watching) }
-        DrawerItem("Browse", Icons.Default.GridView, current == Screen.Browse) { onSelect(Screen.Browse) }
-
-        DrawerSection("Insights")
-        DrawerItem("Recent changes", Icons.Default.History, current is Screen.RecentChanges, unreadCount, null) { onSelect(Screen.RecentChanges()) }
-        DrawerItem("Patterns", Icons.Default.Insights, current is Screen.Patterns) { onSelect(Screen.Patterns()) }
-
-        DrawerSection("App")
-        DrawerItem("Settings", Icons.Default.Settings, current == Screen.Settings) { onSelect(Screen.Settings) }
-        DrawerItem("Test alarm", Icons.Default.NotificationsActive, false) { onTestAlarm() }
-        DrawerItem("Help", Icons.Default.Info, current == Screen.Help) { onSelect(Screen.Help) }
-        Spacer(modifier = Modifier.height(12.dp))
     }
 }
 
 @Composable
-private fun DrawerSection(title: String) {
-    SectionLabel(title, modifier = Modifier.padding(start = 28.dp, top = 12.dp, bottom = 4.dp))
-}
-
-@Composable
-private fun DrawerItem(
-    label: String,
-    icon: ImageVector,
-    selected: Boolean,
-    badgeCount: Int = 0,
-    badgeColor: androidx.compose.ui.graphics.Color? = null,
-    onClick: () -> Unit
-) {
-    NavigationDrawerItem(
-        label = { Text(label) },
-        icon = { Icon(icon, contentDescription = null) },
-        selected = selected,
-        onClick = onClick,
-        badge = if (badgeCount > 0) {
-            {
-                if (badgeColor != null) {
-                    Badge(containerColor = badgeColor) { Text("$badgeCount") }
-                } else {
-                    Badge { Text("$badgeCount") }
-                }
+private fun DockTile(item: DockItem, active: Boolean, badge: Int?, badgeInStock: Boolean, onClick: () -> Unit) {
+    val scale by animateFloatAsState(if (active) 1.12f else 1f, label = "dock_scale")
+    val lift by animateDpAsState(if (active) (-6).dp else 0.dp, label = "dock_lift")
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+        modifier = Modifier
+            .width(62.dp)
+            .selectable(selected = active, role = Role.Tab, onClick = onClick)
+            .testTag("dock_${item.label}")
+    ) {
+        Box(modifier = Modifier
+            .offset(y = lift)
+            .scale(scale)) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(48.dp)
+                    .shadow(if (active) 10.dp else 0.dp, RoundedCornerShape(15.dp), spotColor = StockColors.Watched)
+                    .background(if (active) StockColors.Watched else Color(0x12FFFFFF), RoundedCornerShape(15.dp))
+            ) {
+                Icon(item.icon, contentDescription = null, tint = if (active) StockColors.OnWatched else Color(0xFFEEF1F6), modifier = Modifier.size(24.dp))
             }
-        } else null,
-        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-    )
+            if (badge != null) {
+                Text(
+                    "$badge",
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (badgeInStock) StockColors.OnInStock else Color(0xFF0B0D12),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(x = 5.dp, y = (-5).dp)
+                        .border(2.dp, Color(0xFF1A1E2A), CircleShape)
+                        .background(if (badgeInStock) StockColors.InStock else Color(0xFFEEF1F6), CircleShape)
+                        .padding(horizontal = 6.dp, vertical = 1.dp)
+                )
+            }
+        }
+        Text(
+            item.label,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (active) Color(0xFFEEF1F6) else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Box(
+            modifier = Modifier
+                .size(4.dp)
+                .background(if (active) StockColors.Watched else Color.Transparent, CircleShape)
+        )
+    }
 }
 
 @Composable
@@ -517,14 +572,15 @@ fun HelpScreen(modifier: Modifier = Modifier) {
         modifier = modifier
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        HelpItem("How it works", "The app asks Apple's in-store pickup service about the devices you watch, about every 60 seconds while monitoring is on. When a device comes into stock at a store within your radius, an alarm sounds.")
-        HelpItem("Device groups", "One group can hold exact devices (iPhone Duo 256GB Night Sky) and wide choices (any colour, any storage). One group can also hold more than one model.")
-        HelpItem("Location and radius", "Each group uses the default location from Settings, or its own. Apple decides how many stores it returns for a postal code, so a large radius cannot show stores Apple does not send.")
+        HelpItem("Notify", "Tap Notify on any phone in Stock. The app watches that exact phone and starts monitoring. Tap On again to stop.")
+        HelpItem("Groups", "In My alerts, one group can mean any colour, any storage, or more than one model, with its own location and radius. Tap a storage or colour heading in Stock to start one.")
+        HelpItem("Restock times", "“Last restock”, “usually around”, “times this week” and “sells out in” are counted from the changes this phone saw. While monitoring is on, the app checks every colour and storage of the models you watch, so these fill in over a few days.")
+        HelpItem("Location and radius", "Each alert uses the default location from Settings, or its own. Apple decides how many stores it returns for a postal code, so a large radius cannot show stores Apple does not send.")
         HelpItem("Keep it running", "Allow notifications and unrestricted battery use. Without them, Android can stop the checks while the screen is off.")
-        HelpItem("Recent changes and Patterns", "These use only what this phone saw. Gaps show when the app was not checking. Patterns need a few days of data before they mean much.")
         HelpItem("If a cell shows SKU?", "Apple does not know that part number. Correct it in ProductCatalog.kt.")
+        Spacer(modifier = Modifier.height(LocalDockPadding.current))
     }
 }
 

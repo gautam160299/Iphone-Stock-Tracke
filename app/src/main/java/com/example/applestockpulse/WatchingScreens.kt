@@ -100,7 +100,7 @@ fun WatchingScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(horizontal = 16.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp + LocalDockPadding.current),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (!hasNotificationPermission) {
@@ -125,7 +125,7 @@ fun WatchingScreen(
             }
 
             latestEvent?.let { event ->
-                item { LatestChangeStrip(event) { actions.navigate(Screen.RecentChanges()) } }
+                item { LatestChangeStrip(event) { actions.navigate(Screen.Stock(tab = StockTab.CHANGES)) } }
             }
 
             if (rules.isEmpty()) {
@@ -133,20 +133,19 @@ fun WatchingScreen(
                     Card(shape = RoundedCornerShape(18.dp)) {
                         EmptyState(
                             icon = Icons.Default.Visibility,
-                            title = "Watch your first device",
-                            text = "Pick one device, or a group such as \"iPhone Duo, any colour\". The app checks all your groups at the same time."
+                            title = "No alerts yet",
+                            text = "Tap Notify on any phone in Stock, or build a group here: any colour, any storage, or several models."
                         ) {
-                            Button(onClick = { actions.openEditor(newRuleDraft()) }) {
-                                Icon(Icons.Default.Add, contentDescription = null)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Add device")
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(onClick = { actions.navigate(Screen.Stock()) }) { Text("Open Stock") }
+                                OutlinedButton(onClick = { actions.openEditor(newRuleDraft()) }) { Text("Add group") }
                             }
                         }
                     }
                 }
             } else {
                 item {
-                    SectionLabel("Your device groups (${rules.size})", modifier = Modifier.padding(top = 4.dp))
+                    SectionLabel("Your alerts (${rules.size})", modifier = Modifier.padding(top = 4.dp))
                 }
                 items(sortedRules, key = { it.id }) { rule ->
                     RuleCard(
@@ -162,19 +161,21 @@ fun WatchingScreen(
                         }
                     )
                 }
+                item {
+                    Button(
+                        onClick = { actions.openEditor(newRuleDraft()) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp)
+                            .testTag("add_rule_button"),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Add group", fontWeight = FontWeight.Bold)
+                    }
+                }
             }
-        }
-
-        if (rules.isNotEmpty()) {
-            ExtendedFloatingActionButton(
-                onClick = { actions.openEditor(newRuleDraft()) },
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text("Add device") },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp)
-                    .testTag("add_rule_button")
-            )
         }
     }
 }
@@ -427,7 +428,7 @@ fun RuleDetailScreen(
 
     LazyColumn(
         modifier = modifier.padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp + LocalDockPadding.current),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
@@ -521,7 +522,7 @@ fun RuleDetailScreen(
 
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { actions.navigate(Screen.RecentChanges()) }) {
+                TextButton(onClick = { actions.navigate(Screen.Stock(tab = StockTab.CHANGES)) }) {
                     Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("All changes")
