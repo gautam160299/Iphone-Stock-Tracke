@@ -187,6 +187,12 @@ fun AppleStockPulseApp() {
         }
     }
 
+    // Android 14+ can block the full-screen alarm screen; the user turns it on in Settings
+    var canUseFullScreenAlarm by remember { mutableStateOf(AlertNotifier.canUseFullScreenAlarm(context)) }
+
+    val isAlarmRinging by AlarmPlayer.isRinging.collectAsStateWithLifecycle()
+    var showAlertSettingsDialog by remember { mutableStateOf(false) }
+
     // Battery Optimization State
     var isIgnoringBatteryOptimizations by remember {
         mutableStateOf(checkBatteryOptimization(context))
@@ -196,6 +202,7 @@ fun AppleStockPulseApp() {
     LifecycleResumeEffect(Unit) {
         hasNotificationPermission = AlertNotifier.canPostAlarms(context)
         isIgnoringBatteryOptimizations = checkBatteryOptimization(context)
+        canUseFullScreenAlarm = AlertNotifier.canUseFullScreenAlarm(context)
         onPauseOrDispose { }
     }
 
@@ -218,6 +225,16 @@ fun AppleStockPulseApp() {
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = { showAlertSettingsDialog = true },
+                        modifier = Modifier.testTag("action_alert_settings")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = "Alert settings",
+                            tint = Color(0xFF38BDF8)
+                        )
+                    }
                     IconButton(
                         onClick = { openAppleBag(context) },
                         modifier = Modifier.testTag("action_open_bag")
@@ -243,12 +260,24 @@ fun AppleStockPulseApp() {
             contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            if (isAlarmRinging) {
+                item {
+                    AlarmRingingBanner(onStop = { AlarmPlayer.stop() })
+                }
+            }
+
             // Permission & Battery notices if needed
             if (!hasNotificationPermission) {
                 item {
                     NotificationPermissionBanner(
                         onRequestPermission = { requestNotifications(startAfter = false) }
                     )
+                }
+            }
+
+            if (!canUseFullScreenAlarm) {
+                item {
+                    FullScreenAlarmBanner(onAllow = { openFullScreenAlarmSettings(context) })
                 }
             }
 
@@ -481,7 +510,7 @@ fun AppleStockPulseApp() {
                                 ) {
                                     Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Start 60s Monitoring", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text("Start 30s Monitoring", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                 }
                             } else {
                                 Button(
@@ -516,7 +545,7 @@ fun AppleStockPulseApp() {
                                 onClick = {
                                     if (hasNotificationPermission) {
                                         AlertNotifier.postTestAlarm(context)
-                                        Toast.makeText(context, "Test alarm notification fired!", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(context, "Test alarm ringing. Tap Stop alarm to silence it.", Toast.LENGTH_SHORT).show()
                                     } else {
                                         requestNotifications(startAfter = false)
                                     }
@@ -630,6 +659,17 @@ fun AppleStockPulseApp() {
                 }
             }
         }
+    }
+
+    if (showAlertSettingsDialog) {
+        AlertSettingsDialog(
+            initialTopic = preferences.getNtfyTopic(),
+            onSave = { topic ->
+                preferences.setNtfyTopic(topic)
+                showAlertSettingsDialog = false
+            },
+            onDismiss = { showAlertSettingsDialog = false }
+        )
     }
 
     // Postal Code Dialog
@@ -1092,6 +1132,167 @@ fun ErrorNoticeCard(message: String) {
 }
 
 @Composable
+fun AlarmRingingBanner(onStop: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFDC2626))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.NotificationsActive,
+                contentDescription = null,
+                tint = Color.White
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "Stock alarm is ringing",
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp,
+                color = Color.White,
+                modifier = Modifier.weight(1f)
+            )
+            Button(
+                onClick = onStop,
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFFDC2626)),
+                modifier = Modifier.testTag("stop_alarm_button")
+            ) {
+                Text("Stop alarm", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun FullScreenAlarmBanner(onAllow: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0x22F59E0B))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = Color(0xFFD97706)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Full-screen alarm is off",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = "Allow it so a stock alarm wakes the screen and shows over the lock screen.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(
+                onClick = onAllow,
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD97706))
+            ) {
+                Text("Allow", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@Composable
+fun AlertSettingsDialog(initialTopic: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var topic by remember { mutableStateOf(initialTopic) }
+    val target = NtfyNotifier.parseTarget(topic)
+    val topicValid = topic.isBlank() || target != null
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Alerts on other devices") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Each alarm is also sent to this ntfy topic. Install the ntfy app on another phone, " +
+                        "tablet or laptop and subscribe to the same topic.",
+                    fontSize = 13.sp
+                )
+                Text(
+                    "Anyone who knows the topic can read it. Use a long, random name.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = topic,
+                    onValueChange = { topic = it.trim() },
+                    label = { Text("ntfy topic") },
+                    placeholder = { Text("e.g. applestock-x7k2p9q4") },
+                    isError = !topicValid,
+                    supportingText = {
+                        Text(
+                            if (topicValid) "Leave blank to turn off. A full https:// topic URL also works."
+                            else "Use letters, digits, - and _ only, or an https:// topic URL"
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { topic = randomNtfyTopic() }) {
+                        Text("Generate", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        enabled = target != null,
+                        onClick = {
+                            NtfyNotifier.publish(
+                                target,
+                                title = "AppleStockPulse test",
+                                message = "Alerts on this device work.",
+                                clickUrl = null
+                            ) { _, message ->
+                                ContextCompat.getMainExecutor(context).execute {
+                                    Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    ) {
+                        Text("Send test", fontSize = 12.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(enabled = topicValid, onClick = { onSave(topic) }) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
+}
+
+private fun randomNtfyTopic(): String {
+    val chars = "abcdefghijkmnpqrstuvwxyz23456789"
+    return "applestock-" + (1..16).map { chars.random() }.joinToString("")
+}
+
+@Composable
 fun NotificationPermissionBanner(onRequestPermission: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1162,7 +1363,7 @@ fun BatteryOptimizationBanner(onRequestExemption: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = "Allow app to run in background so 60s inventory scanning stays active while screen is locked.",
+                    text = "Allow app to run in background so 30s inventory scanning stays active while screen is locked.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1237,6 +1438,14 @@ private fun openNotificationSettings(context: Context) {
         context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (e: Exception) {
         Toast.makeText(context, "Open Settings > Apps > AppleStockPulse > Notifications.", Toast.LENGTH_LONG).show()
+    }
+}
+
+private fun openFullScreenAlarmSettings(context: Context) {
+    try {
+        context.startActivity(AlertNotifier.fullScreenAlarmSettingsIntent(context))
+    } catch (e: Exception) {
+        Toast.makeText(context, "Open Settings > Apps > AppleStockPulse and allow full-screen notifications.", Toast.LENGTH_LONG).show()
     }
 }
 

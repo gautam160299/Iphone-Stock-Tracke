@@ -246,7 +246,8 @@ class StockTrackerService : Service() {
                     }
                 }
 
-                val jitterDelay = 52_000L + Random.nextLong(0, 16_001L)
+                // 27-33 s: Apple stock often sells out within a minute
+                val jitterDelay = 27_000L + Random.nextLong(0, 6_001L)
                 Log.d(TAG, "Next poll in ${jitterDelay / 1000}s")
                 delay(jitterDelay)
             }
@@ -362,7 +363,7 @@ class StockTrackerService : Service() {
 
         if (statusCode !in 200..299) {
             val errorMsg = if (statusCode == 541) {
-                "HTTP 541: Apple is blocking or rate-limiting these requests. Retrying in ~60s..."
+                "HTTP 541: Apple is blocking or rate-limiting these requests. Retrying in ~30s..."
             } else {
                 "HTTP $statusCode from Apple server"
             }
@@ -529,6 +530,7 @@ class StockTrackerService : Service() {
         _uiState.update {
             it.copy(isRunning = false, lastStatusMessage = "Tracker stopped by user")
         }
+        AlarmPlayer.stop()
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

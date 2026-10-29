@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:allowBackup="true"
@@ -31,6 +32,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Full-screen stock alarm, shown over the lock screen -->
+        <activity
+            android:name="com.example.applestockpulse.AlarmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity="com.example.applestockpulse.alarm"
+            android:theme="@style/Theme.MyApplication" />
+
+        <receiver
+            android:name="com.example.applestockpulse.AlarmStopReceiver"
+            android:exported="false" />
 
         <service
             android:name="com.example.applestockpulse.StockTrackerService"
