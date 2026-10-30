@@ -57,6 +57,8 @@ data class TrackerUiState(
     val snapshots: Map<String, LocationSnapshot> = emptyMap(),
     val watchedSkuCount: Int = 0,
     val requestsPerCheck: Int = 0,
+    // Seconds added to the chosen check interval after Apple blocked us
+    val extraIntervalSec: Int = 0,
     val error: String? = null
 )
 
@@ -277,7 +279,8 @@ class StockTrackerService : Service() {
                 }
 
                 // The chosen interval +/- 10 %, so checks do not land on an exact beat. While Apple blocks us, wait longer.
-                val intervalMs = preferences.getCheckIntervalSeconds() * 1000L
+                val intervalMs = preferences.getCheckIntervalSeconds() * 1000L + blockBackoff.extraIntervalMs
+                _uiState.update { it.copy(extraIntervalSec = (blockBackoff.extraIntervalMs / 1000).toInt()) }
                 val jitterDelay = intervalMs * 9 / 10 + Random.nextLong(0, intervalMs / 5 + 1)
                 val nextPollMs = maxOf(jitterDelay, blockBackoff.blockedUntilMs - System.currentTimeMillis())
                 Log.d(TAG, "Next poll in ${nextPollMs / 1000}s")
@@ -550,7 +553,7 @@ class StockTrackerService : Service() {
         if (statusCode !in 200..299) {
             return ChunkResult(statusCode, null, "HTTP $statusCode from Apple server")
         }
-        blockBackoff.onSuccess()
+        blockBackoff.onSuccess(System.currentTimeMillis())
 
         return try {
             ChunkResult(statusCode, AppleInventoryParser.parse(body, skus, emptySet(), ""), null)

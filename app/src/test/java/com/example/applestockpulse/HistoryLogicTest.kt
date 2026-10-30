@@ -68,6 +68,20 @@ class HistoryLogicTest {
     }
 
     @Test
+    fun `a gap counts the background checks that failed in it`() {
+        val ok = listOf(0L, 30 * minute).map {
+            CheckLogEntity(timestamp = it, postalCode = "V6C1T2", skuCount = 1, success = true, background = true)
+        }
+        val failed = listOf(1 * minute, 3 * minute, 8 * minute).map {
+            CheckLogEntity(timestamp = it, postalCode = "V6C1T2", skuCount = 1, success = false, background = true)
+        }
+
+        val gaps = CheckGaps.find(ok + failed, from = 0, now = 31 * minute)
+
+        assertEquals(listOf(CheckGap(0L, 30 * minute, failedChecks = 3)), gaps)
+    }
+
+    @Test
     fun `patterns count one restock per store and check, and skip first sightings`() {
         val nineAm = Calendar.getInstance(utc).apply {
             set(2026, Calendar.OCTOBER, 26, 9, 5, 0) // a Monday

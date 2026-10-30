@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -68,6 +69,7 @@ fun SettingsScreen(
     var storeFilter by remember { mutableStateOf(preferences.getStoreFilter()) }
     var confirmClear by remember { mutableStateOf(false) }
     var checkInterval by remember { mutableStateOf(preferences.getCheckIntervalSeconds()) }
+    val extraIntervalSec = StockTrackerService.uiState.collectAsStateWithLifecycle().value.extraIntervalSec
     var canUseFullScreenAlarm by remember { mutableStateOf(AlertNotifier.canUseFullScreenAlarm(context)) }
     LifecycleResumeEffect(Unit) {
         canUseFullScreenAlarm = AlertNotifier.canUseFullScreenAlarm(context)
@@ -157,7 +159,16 @@ fun SettingsScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Monitoring", fontWeight = FontWeight.SemiBold)
-                    Text(if (isRunning) "On · checks about every $checkInterval s" else "Off", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        when {
+                            !isRunning -> "Off"
+                            extraIntervalSec > 0 -> "On · checks about every ${checkInterval + extraIntervalSec} s " +
+                                "($checkInterval s + $extraIntervalSec s, because Apple blocked faster checks)"
+                            else -> "On · checks about every $checkInterval s"
+                        },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 Switch(checked = isRunning, onCheckedChange = actions.startOrStop)
             }

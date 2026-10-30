@@ -223,7 +223,10 @@ private fun GapRow(gap: CheckGap) {
             Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                "No checks ${TimeText.time(gap.start)} – ${TimeText.time(gap.end)} (${TimeText.duration(gap.end - gap.start)}). Changes in this time are missing.",
+                (if (gap.failedChecks > 0) "Checks failed" else "No checks") +
+                    " ${TimeText.time(gap.start)} – ${TimeText.time(gap.end)} (${TimeText.duration(gap.end - gap.start)}). " +
+                    (if (gap.failedChecks > 0) "Apple blocked them or the network was down. " else "Monitoring was off or Android stopped it. ") +
+                    "Changes in this time are missing.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

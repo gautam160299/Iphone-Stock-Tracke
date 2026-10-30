@@ -76,6 +76,7 @@ object StockTab {
 }
 
 private const val STOCK_REFRESH_MS = 60_000L
+private const val STOCK_REFRESH_EXTRA_MS = 3 * 60_000L
 private const val INSIGHT_DAYS = 30
 
 /**
@@ -110,12 +111,21 @@ fun StockScreen(
     val deviceModel = ProductCatalog.getDeviceModel(model)
     val modelSkus = remember(model) { ProductCatalog.getSkusForSelection(model, "All", "All").toSet() }
 
-    // Check when the screen opens, then every ~60 s while it is visible
-    LaunchedEffect(model, defaultLocation) {
+    // A model that monitoring does not check costs Apple requests of its own; while monitoring
+    // runs, refresh it less often so the two together are less likely to get blocked
+    val monitoredHere = remember(rules, defaultLocation) {
+        rules.filter { it.effectiveLocation(defaultLocation).postalCode == defaultLocation.postalCode }
+            .flatMap { rule -> rule.selectors.map { it.model } }
+            .toSet()
+    }
+    val refreshMs = if (isRunning && model !in monitoredHere) STOCK_REFRESH_EXTRA_MS else STOCK_REFRESH_MS
+
+    // Check when the screen opens, then regularly while it is visible
+    LaunchedEffect(model, defaultLocation, refreshMs) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 requestBrowsePoll(context, model)
-                delay(STOCK_REFRESH_MS)
+                delay(refreshMs)
             }
         }
     }

@@ -77,7 +77,8 @@ object ChangeDetector {
     )
 }
 
-data class CheckGap(val start: Long, val end: Long)
+// failedChecks: background checks in the gap that reached Apple but failed (block or network)
+data class CheckGap(val start: Long, val end: Long, val failedChecks: Int = 0)
 
 object CheckGaps {
 
@@ -90,11 +91,14 @@ object CheckGaps {
     fun find(checks: List<CheckLogEntity>, from: Long, now: Long, minGapMs: Long = MIN_GAP_MS): List<CheckGap> {
         val times = checks.filter { it.background && it.success && it.timestamp >= from }.map { it.timestamp }.sorted()
         if (times.isEmpty()) return emptyList()
+        val failed = checks.filter { it.background && !it.success }.map { it.timestamp }
+        fun gap(start: Long, end: Long) = CheckGap(start, end, failed.count { it > start && it < end })
+
         val gaps = mutableListOf<CheckGap>()
         for (i in 1 until times.size) {
-            if (times[i] - times[i - 1] >= minGapMs) gaps.add(CheckGap(times[i - 1], times[i]))
+            if (times[i] - times[i - 1] >= minGapMs) gaps.add(gap(times[i - 1], times[i]))
         }
-        if (now - times.last() >= minGapMs) gaps.add(CheckGap(times.last(), now))
+        if (now - times.last() >= minGapMs) gaps.add(gap(times.last(), now))
         return gaps
     }
 }
