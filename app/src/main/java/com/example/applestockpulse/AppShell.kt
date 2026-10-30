@@ -314,6 +314,15 @@ fun AppRoot(openRuleRequest: MutableStateFlow<String?>) {
                     if (isAlarmRinging) {
                         AlarmRingingBanner(onStop = { AlarmPlayer.stop() })
                     }
+                    val pausedUntil = uiState.pausedUntil
+                    if (isRunning && pausedUntil != null) {
+                        Text(
+                            "Paused by schedule until ${TimeText.time(pausedUntil)} · change it in Settings",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                        )
+                    }
                     if (uiState.isChecking && (current == Screen.Alerts || current is Screen.RuleDetail)) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }

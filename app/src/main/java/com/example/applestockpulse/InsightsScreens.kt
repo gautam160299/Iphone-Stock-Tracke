@@ -78,6 +78,8 @@ fun RecentChangesScreen(
     var storeFilter by remember(initialStore) { mutableStateOf(initialStore) }
     var showStores by remember { mutableStateOf(false) }
     val exportCsv = rememberCsvExporter(historyDao)
+    val context = LocalContext.current
+    val schedule = remember { TrackerPreferences(context).getCheckSchedule() }
 
     val watchedSkus = remember(rules) { rules.flatMap { it.skus() }.toSet() }
     val scopedEvents = remember(events, skuScope) { if (skuScope == null) events else events.filter { it.sku in skuScope } }
@@ -162,7 +164,7 @@ fun RecentChangesScreen(
             when (row) {
                 is ChangeRow.Header -> SectionLabel(row.label, modifier = Modifier.padding(top = 8.dp))
                 is ChangeRow.Event -> StockEventRow(row.event, unread = row.event.id > lastSeenEventIdAtOpen)
-                is ChangeRow.Gap -> GapRow(row.gap)
+                is ChangeRow.Gap -> GapRow(row.gap, schedule)
             }
         }
     }
@@ -215,7 +217,10 @@ fun StockEventRow(event: StockEventEntity, unread: Boolean) {
 }
 
 @Composable
-private fun GapRow(gap: CheckGap) {
+private fun GapRow(gap: CheckGap, schedule: CheckSchedule) {
+    // A gap that is (almost) all inside the night pause was planned, not lost
+    val length = gap.end - gap.start
+    val planned = schedule.pausedMsBetween(gap.start, gap.end) >= length - CheckGaps.MIN_GAP_MS
     Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)) {
         Row(modifier = Modifier
             .fillMaxWidth()
@@ -223,9 +228,16 @@ private fun GapRow(gap: CheckGap) {
             Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                (if (gap.failedChecks > 0) "Checks failed" else "No checks") +
-                    " ${TimeText.time(gap.start)} – ${TimeText.time(gap.end)} (${TimeText.duration(gap.end - gap.start)}). " +
-                    (if (gap.failedChecks > 0) "Apple blocked them or the network was down. " else "Monitoring was off or Android stopped it. ") +
+                when {
+                    planned -> "Paused by schedule"
+                    gap.failedChecks > 0 -> "Checks failed"
+                    else -> "No checks"
+                } + " ${TimeText.time(gap.start)} – ${TimeText.time(gap.end)} (${TimeText.duration(length)}). " +
+                    when {
+                        planned -> ""
+                        gap.failedChecks > 0 -> "Apple blocked them or the network was down. "
+                        else -> "Monitoring was off or Android stopped it. "
+                    } +
                     "Changes in this time are missing.",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

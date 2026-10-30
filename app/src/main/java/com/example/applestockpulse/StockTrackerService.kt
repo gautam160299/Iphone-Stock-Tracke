@@ -59,6 +59,8 @@ data class TrackerUiState(
     val requestsPerCheck: Int = 0,
     // Seconds added to the chosen check interval after Apple blocked us
     val extraIntervalSec: Int = 0,
+    // Set while the daily schedule pauses monitoring: when checks start again
+    val pausedUntil: Long? = null,
     val error: String? = null
 )
 
@@ -123,6 +125,9 @@ class StockTrackerService : Service() {
 
         // Minimum gap between two requests to Apple, so repeated taps cannot flood it
         private const val MIN_REQUEST_GAP_MS = 5_000L
+
+        // During a scheduled pause the loop wakes this often
+        private const val PAUSE_RECHECK_MS = 5 * 60 * 1000L
 
         // The Stock screen reuses a monitoring result younger than this
         private const val WATCH_REUSE_MS = 45_000L
@@ -267,6 +272,26 @@ class StockTrackerService : Service() {
             while (isActive) {
                 // Keeps the CPU awake between polls; Doze honours it only with the battery exemption
                 acquireWakeLock()
+
+                // Planned night pause: no requests, but wake every few minutes to renew the wake
+                // lock and to notice schedule changes
+                val schedule = preferences.getCheckSchedule()
+                val now = System.currentTimeMillis()
+                val mode = schedule.modeAt(now)
+                if (mode == CheckSchedule.Mode.PAUSED) {
+                    val resumeAt = schedule.pauseEndsAfter(now)
+                    if (_uiState.value.pausedUntil != resumeAt) {
+                        val resumeText = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(resumeAt))
+                        _uiState.update {
+                            it.copy(isChecking = false, pausedUntil = resumeAt, lastStatusMessage = "Paused by schedule until $resumeText")
+                        }
+                        updateOngoingStatusNotification("Paused by schedule until $resumeText")
+                    }
+                    delay(minOf(resumeAt - now, PAUSE_RECHECK_MS))
+                    continue
+                }
+                if (_uiState.value.pausedUntil != null) _uiState.update { it.copy(pausedUntil = null) }
+
                 try {
                     pollMutex.withLock { executeWatchCycle(background = true) }
                 } catch (e: CancellationException) {
@@ -278,8 +303,10 @@ class StockTrackerService : Service() {
                     }
                 }
 
-                // The chosen interval +/- 10 %, so checks do not land on an exact beat. While Apple blocks us, wait longer.
-                val intervalMs = preferences.getCheckIntervalSeconds() * 1000L + blockBackoff.extraIntervalMs
+                // The interval for this time of day +/- 10 %, so checks do not land on an exact beat.
+                // While Apple blocks us, wait longer.
+                val baseSec = if (mode == CheckSchedule.Mode.FAST) schedule.fastIntervalSec else preferences.getCheckIntervalSeconds()
+                val intervalMs = baseSec * 1000L + blockBackoff.extraIntervalMs
                 _uiState.update { it.copy(extraIntervalSec = (blockBackoff.extraIntervalMs / 1000).toInt()) }
                 val jitterDelay = intervalMs * 9 / 10 + Random.nextLong(0, intervalMs / 5 + 1)
                 val nextPollMs = maxOf(jitterDelay, blockBackoff.blockedUntilMs - System.currentTimeMillis())

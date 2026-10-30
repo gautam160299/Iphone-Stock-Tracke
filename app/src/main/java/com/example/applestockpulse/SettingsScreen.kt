@@ -37,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -69,7 +70,9 @@ fun SettingsScreen(
     var storeFilter by remember { mutableStateOf(preferences.getStoreFilter()) }
     var confirmClear by remember { mutableStateOf(false) }
     var checkInterval by remember { mutableStateOf(preferences.getCheckIntervalSeconds()) }
-    val extraIntervalSec = StockTrackerService.uiState.collectAsStateWithLifecycle().value.extraIntervalSec
+    val trackerState by StockTrackerService.uiState.collectAsStateWithLifecycle()
+    val extraIntervalSec = trackerState.extraIntervalSec
+    val pausedUntil = trackerState.pausedUntil
     var canUseFullScreenAlarm by remember { mutableStateOf(AlertNotifier.canUseFullScreenAlarm(context)) }
     LifecycleResumeEffect(Unit) {
         canUseFullScreenAlarm = AlertNotifier.canUseFullScreenAlarm(context)
@@ -151,6 +154,10 @@ fun SettingsScreen(
             Text("A store/device pair alarms at most once every 10 minutes, so stock that flickers does not repeat the alarm.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
+        SettingsCard("Daily schedule") {
+            ScheduleSettings(preferences)
+        }
+
         SettingsCard("Other devices (ntfy)") {
             NtfySettings(preferences)
         }
@@ -162,6 +169,7 @@ fun SettingsScreen(
                     Text(
                         when {
                             !isRunning -> "Off"
+                            pausedUntil != null -> "On · paused by schedule until ${TimeText.time(pausedUntil)}"
                             extraIntervalSec > 0 -> "On · checks about every ${checkInterval + extraIntervalSec} s " +
                                 "($checkInterval s + $extraIntervalSec s, because Apple blocked faster checks)"
                             else -> "On · checks about every $checkInterval s"
@@ -172,7 +180,7 @@ fun SettingsScreen(
                 }
                 Switch(checked = isRunning, onCheckedChange = actions.startOrStop)
             }
-            Text("Check every", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text("Normal speed: check every", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 TrackerPreferences.CHECK_INTERVAL_OPTIONS_SEC.forEach { seconds ->
                     FilterChip(
@@ -300,6 +308,59 @@ private fun rememberBackupActions(): BackupActions {
         // Some file pickers label JSON as plain text or octet-stream
         restore = { restoreLauncher.launch(arrayOf("application/json", "text/plain", "application/octet-stream")) }
     )
+}
+
+@Composable
+private fun ScheduleSettings(preferences: TrackerPreferences) {
+    var schedule by remember { mutableStateOf(preferences.getCheckSchedule()) }
+    fun update(changed: CheckSchedule) {
+        schedule = changed
+        preferences.setCheckSchedule(changed)
+    }
+    val label: (Int) -> String = { CheckSchedule.hourLabel(it) }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Use a daily schedule", fontWeight = FontWeight.SemiBold)
+            Text(
+                if (!schedule.enabled) "Off · the normal speed all day and night"
+                else "Fast ${label(schedule.pauseEndHour)}–${label(schedule.fastEndHour)} · " +
+                    "normal ${label(schedule.fastEndHour)}–${label(schedule.pauseStartHour)} · " +
+                    "paused ${label(schedule.pauseStartHour)}–${label(schedule.pauseEndHour)}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(checked = schedule.enabled, onCheckedChange = { update(schedule.copy(enabled = it)) })
+    }
+    if (schedule.enabled) {
+        HourStepper("Pause from", schedule.pauseStartHour) { update(schedule.copy(pauseStartHour = it)) }
+        HourStepper("Start again at", schedule.pauseEndHour) { update(schedule.copy(pauseEndHour = it)) }
+        HourStepper("Fast checks (${schedule.fastIntervalSec} s) until", schedule.fastEndHour) {
+            update(schedule.copy(fastEndHour = it))
+        }
+        Text(
+            "No requests to Apple during the pause, so no alarms either. Restocks at night are missed; " +
+                "look at Patterns after a few days to see when restocks really happen near you.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun HourStepper(label: String, hour: Int, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        OutlinedButton(onClick = { onChange((hour + 23) % 24) }) { Text("−") }
+        Text(
+            CheckSchedule.hourLabel(hour),
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.width(72.dp)
+        )
+        OutlinedButton(onClick = { onChange((hour + 1) % 24) }) { Text("+") }
+    }
 }
 
 /** ntfy topic for alarms on a laptop, tablet or second phone. */

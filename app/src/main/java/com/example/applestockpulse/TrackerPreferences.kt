@@ -31,6 +31,10 @@ class TrackerPreferences(context: Context) {
         const val KEY_LAST_SEEN_EVENT_ID = "key_last_seen_event_id"
         const val KEY_NTFY_TOPIC = "key_ntfy_topic"
         const val KEY_CHECK_INTERVAL_SEC = "key_check_interval_sec"
+        const val KEY_SCHEDULE_ENABLED = "key_schedule_enabled"
+        const val KEY_SCHEDULE_PAUSE_START = "key_schedule_pause_start"
+        const val KEY_SCHEDULE_PAUSE_END = "key_schedule_pause_end"
+        const val KEY_SCHEDULE_FAST_END = "key_schedule_fast_end"
 
         // Faster checks catch short sales sooner but make an Apple block more likely
         val CHECK_INTERVAL_OPTIONS_SEC = listOf(30, 45, 60)
@@ -109,6 +113,26 @@ class TrackerPreferences(context: Context) {
 
     fun setCheckIntervalSeconds(seconds: Int) {
         if (seconds in CHECK_INTERVAL_OPTIONS_SEC) prefs.edit().putInt(KEY_CHECK_INTERVAL_SEC, seconds).apply()
+    }
+
+    fun getCheckSchedule(): CheckSchedule {
+        val defaults = CheckSchedule()
+        fun hour(key: String, default: Int) = prefs.getInt(key, default).takeIf { it in 0..23 } ?: default
+        return CheckSchedule(
+            enabled = prefs.getBoolean(KEY_SCHEDULE_ENABLED, defaults.enabled),
+            pauseStartHour = hour(KEY_SCHEDULE_PAUSE_START, defaults.pauseStartHour),
+            pauseEndHour = hour(KEY_SCHEDULE_PAUSE_END, defaults.pauseEndHour),
+            fastEndHour = hour(KEY_SCHEDULE_FAST_END, defaults.fastEndHour)
+        )
+    }
+
+    fun setCheckSchedule(schedule: CheckSchedule) {
+        prefs.edit()
+            .putBoolean(KEY_SCHEDULE_ENABLED, schedule.enabled)
+            .putInt(KEY_SCHEDULE_PAUSE_START, schedule.pauseStartHour.mod(24))
+            .putInt(KEY_SCHEDULE_PAUSE_END, schedule.pauseEndHour.mod(24))
+            .putInt(KEY_SCHEDULE_FAST_END, schedule.fastEndHour.mod(24))
+            .apply()
     }
 
     fun getDefaultLocation(): SearchLocation = SearchLocation(getCleanPostalCode(), getRadiusKm())
